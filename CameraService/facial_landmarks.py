@@ -5,14 +5,20 @@ from imutils import face_utils
 import json
 import math
 import datetime
+import os
+import zipfile
 
 DEBUG = True
 POSSIBLE_CAMERAS = 1
-
 DISTANCE = 1
+NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 200
+ALLOWED_X_Y_DISTANCE = 10
 
 path_for_pictures = "./pictures_for_analysis/"
 face_landmark_path = './shape_predictor_68_face_landmarks.dat'
+
+JSON_POINTS_PATH = "./points.json"
+MAX_SIZE_FOR_FILE = 20
 
 K = [6.5308391993466671e+002, 0.0, 3.1950000000000000e+002,
      0.0, 6.5308391993466671e+002, 2.3950000000000000e+002,
@@ -116,18 +122,98 @@ def get_default_camera(cameras, index_for_camera=0, external=False):
         return cameras[index_for_camera]
 
 
-def save_frame_as_picture(frame):
+def create_time_stamp():
 
     raw_timestamp = datetime.datetime.now()
 
     # example: raw_timestamp -> 2019-03-12 08:14:47.501562
     timestamp = str(raw_timestamp).split(".")[0].replace("-", "").replace(" ", "").replace(":", "")
 
-    cv2.imwrite(path_for_pictures + timestamp + ".jpg", frame)
+    return timestamp
+
+
+def save_frame_as_picture(frame, x, y):
+
+    timestamp = create_time_stamp()
+
+    # adding the timestamp and the x,y position we are attaching to the frame
+    cv2.imwrite(path_for_pictures + timestamp + "_" + str(x) + "_" + str(y) + ".jpg", frame)
 
     if DEBUG:
         print("saved photo with timestamp:" + str(timestamp) + ".jpg")
 
+
+def delete_current_json_file():
+
+    # removing the file
+    os.remove(JSON_POINTS_PATH)
+
+    # checking that the file has been deleted
+    try:
+        check_file_deletion = os.path.isfile(JSON_POINTS_PATH)
+        if check_file_deletion:
+            print("file stil exists")
+        else:
+            print("file deleted")
+    except IOError as error:
+        print("got error while deleting the json file:")
+        print(error)
+
+
+def check_json_file_size():
+
+    # check if the path to the json file is valid - means if it exists
+    check_valid_path = os.path.isfile(JSON_POINTS_PATH)
+    if check_valid_path:
+
+        # getting the current file size of the json file
+        file_size_bytes = os.path.getsize(JSON_POINTS_PATH)
+
+        # convert the bytes into mg and round up to be sure
+        file_size_mg = round(int(file_size_bytes) / 1000)
+
+        # if the file size exceeds the allowed max file size -> the creation of the new file will be when we will be writing to it
+        if file_size_mg >= MAX_SIZE_FOR_FILE:
+
+            timestamp = create_time_stamp()
+
+            # zip the current points json file
+            zipf = zipfile.ZipFile("./points" + timestamp + ".zip", 'w', zipfile.ZIP_DEFLATED)
+            zipf.write(JSON_POINTS_PATH)
+            print("points has been stored to a zip file")
+
+            delete_current_json_file()
+
+
+def insert_points_to_json_file(x, y):
+
+    updated = False
+
+    try:
+        with open(JSON_POINTS_PATH, "wr") as json_file:
+
+            # load the content of the json file
+            values = json.load(json_file)
+
+            # getting the current points in the json file
+            results = values['results']
+
+            # insert the current x,y to the array
+            new_results = insert_x_y(x, y, results)
+
+            # convert the new array to the structure of the json file
+            to_json_results = {"results": new_results}
+
+            # dump the new json into the file
+            json.dump(to_json_results, json_file)
+
+            updated = True
+
+    except IOError as error:
+        print("got error while writing to json file")
+        print(error)
+
+    return updated
 
 def main():
     # return
@@ -155,20 +241,11 @@ def main():
     # init the predictor
     predictor = dlib.shape_predictor(face_landmark_path)
 
-    # init an array for the points we will find
-    points = [] # tuples (x,y)
-
     # index when we will take the frame and get the emotions from the picture
     index = 1
     while cap.isOpened():
 
-        index += 1
-
         ret, frame = cap.read()
-
-        # after 1000 frames we are saving one photo
-        if index % 5 == 0:
-            save_frame_as_picture(frame)
 
         # getting the width and height from the video
         width = cap.get(3)
@@ -200,77 +277,95 @@ def main():
                     for (x, y) in shape:
                         cv2.circle(frame, (x, y), 1, (0, 0, 255), -1)
 
+                    # calculate where the observer is looking
                     x = width/2 - int((euler_angle[1, 0]/30)*(width/2)*(DISTANCE)) # the 30 parameter should be the angel up and down of the camera
                     y = height/2 + int((euler_angle[0, 0]/30)*(height/2)*(DISTANCE))
-                    print(euler_angle)
+
+                    # after 1000 frames we are saving one photo
+                    if index % NUMBER_OF_FRAMES_TO_SAVE_PICTURE == 0:
+                        save_frame_as_picture(frame, x, y)
+
                     cv2.circle(frame, (int(x), int(y)), 3, (10, 20, 20), 2)
-                    points.append((x,y))
 
                     if DEBUG:
                         print("x: " + str(x) + ", y: " + str(y))
 
-                    with open("./points.json", "r") as json_file:
-                        values = json.load(json_file)
-                        results = values['results']
-                        new_results = insert_x_y(x,y, results)
-                        to_json_results = {"results": new_results}
-                        with open("./points.json", "w") as json_file:
-                            json.dump(to_json_results, json_file)
+                    # checking that the json file is not too large -> if so -> handling ot
+                    check_json_file_size()
 
-                            if DEBUG:
-                                print("updated json file")
+                    # insert the current x,y to the json file
+                    updated = insert_points_to_json_file(x, y)
+
+                    if updated:
+                        print("updated json file")
 
             cv2.imshow("demo", frame)
-            array_list = []
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                for (x, y) in points:
-                    array_list = insert_x_y(x,y, array_list)
-
-                array_list = finilize_to_send(array_list)
                 break
+
+        index += 1
 
 
 def insert_x_y(x,y, array_list):
+
+    # indicator if we have already entered the point
     entered = False
-    for i in range(0, len(array_list)):
-        if array_list[i]['x'] == x and array_list[i]['y'] == y:
+
+    # checking if the current x,y is already in the json file
+    # if so -> we will add to the number of views for that product
+    for value in array_list:
+        if value['x'] == x and value['y'] == y:
+
+            # got the same x,y as in the json file and will add 1 to the value attribute
             entered = True
-            array_list[i]['value'] += 1
+            value['value'] += 1
             break
 
+    # if the current x,y is not in the json file -> will check if it's close enough to the product
     if not entered:
         array_list = check_close_pixel([x,y,1], array_list)
+
+    # returning the new array list
     return array_list
 
 
 def check_close_pixel(pxl, array_list):
-    dist_to_pixel = 10
+
+    # checking if the current x,y is close to another pixel
     found = False
-    for i in range(0,len(array_list)):
-        if pxl[0] + dist_to_pixel <= array_list[i]['x'] or pxl[0] - dist_to_pixel >= array_list[i]['x']:
-            if pxl[1] + dist_to_pixel <= array_list[i]['y'] or pxl[1] - dist_to_pixel >= array_list[i]['y']:
-                array_list[i]['value'] += pxl[2]
+    for value in array_list:
+
+        # we are checking if the x is in the allowed range of pixel to another pixel
+        if pxl[0] + ALLOWED_X_Y_DISTANCE <= value['x'] or pxl[0] - ALLOWED_X_Y_DISTANCE >= value['x']:
+
+            # we are checking if the y is in the allowed range of pixel to another pixel
+            if pxl[1] + ALLOWED_X_Y_DISTANCE <= value['y'] or pxl[1] - ALLOWED_X_Y_DISTANCE >= value['y']:
+
+                # add 1 to the pixel in the position we found
+                value['value'] += pxl[2]
                 found = True
                 break
+
+    # if we did not find any pixel close enough then
+    # we will add to the array list the new x,y we got from the main function
     if not found:
         array_list.append({"x": pxl[0], "y": pxl[1], "value": pxl[2], "radius": 40})
+
     return array_list
 
 
-
-def finilize_to_send(list_to_order):
-
-    return list_to_order.sort(key=get_value)
-
-
-def get_value(object):
-
-    if (not object) or (object is None):
-        return 0
-    return object['value']
-
-
-
+# # function for adjust the list in order of value
+# def finilize_to_send(list_to_order):
+#
+#     return list_to_order.sort(key=get_value)
+#
+#
+# # getting the value of the current object
+# def get_value(object):
+#
+#     if (not object) or (object is None):
+#         return 0
+#     return object['value']
 
 if __name__ == '__main__':
     main()
