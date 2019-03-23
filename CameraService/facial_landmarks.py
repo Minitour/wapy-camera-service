@@ -12,13 +12,12 @@ DEBUG = True
 POSSIBLE_CAMERAS = 1
 DISTANCE = 1
 NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 200
+NUMBER_OF_X_Y_TO_POST = 500
 ALLOWED_X_Y_DISTANCE = 10
 
 path_for_pictures = "./pictures_for_analysis/"
 face_landmark_path = './shape_predictor_68_face_landmarks.dat'
 
-JSON_POINTS_PATH = "./points.json"
-MAX_SIZE_FOR_FILE = 20
 
 K = [6.5308391993466671e+002, 0.0, 3.1950000000000000e+002,
      0.0, 6.5308391993466671e+002, 2.3950000000000000e+002,
@@ -143,77 +142,6 @@ def save_frame_as_picture(frame, x, y):
         print("saved photo with timestamp:" + str(timestamp) + ".jpg")
 
 
-def delete_current_json_file():
-
-    # removing the file
-    os.remove(JSON_POINTS_PATH)
-
-    # checking that the file has been deleted
-    try:
-        check_file_deletion = os.path.isfile(JSON_POINTS_PATH)
-        if check_file_deletion:
-            print("file stil exists")
-        else:
-            print("file deleted")
-    except IOError as error:
-        print("got error while deleting the json file:")
-        print(error)
-
-
-def check_json_file_size():
-
-    # check if the path to the json file is valid - means if it exists
-    check_valid_path = os.path.isfile(JSON_POINTS_PATH)
-    if check_valid_path:
-
-        # getting the current file size of the json file
-        file_size_bytes = os.path.getsize(JSON_POINTS_PATH)
-
-        # convert the bytes into mg and round up to be sure
-        file_size_mg = round(int(file_size_bytes) / 1000)
-
-        # if the file size exceeds the allowed max file size -> the creation of the new file will be when we will be writing to it
-        if file_size_mg >= MAX_SIZE_FOR_FILE:
-
-            timestamp = create_time_stamp()
-
-            # zip the current points json file
-            zipf = zipfile.ZipFile("./points" + timestamp + ".zip", 'w', zipfile.ZIP_DEFLATED)
-            zipf.write(JSON_POINTS_PATH)
-            print("points has been stored to a zip file")
-
-            delete_current_json_file()
-
-
-def insert_points_to_json_file(x, y):
-
-    updated = False
-
-    try:
-        with open(JSON_POINTS_PATH, "wr") as json_file:
-
-            # load the content of the json file
-            values = json.load(json_file)
-
-            # getting the current points in the json file
-            results = values['results']
-
-            # insert the current x,y to the array
-            new_results = insert_x_y(x, y, results)
-
-            # convert the new array to the structure of the json file
-            to_json_results = {"results": new_results}
-
-            # dump the new json into the file
-            json.dump(to_json_results, json_file)
-
-            updated = True
-
-    except IOError as error:
-        print("got error while writing to json file")
-        print(error)
-
-    return updated
 
 def main():
     # return
@@ -243,6 +171,9 @@ def main():
 
     # index when we will take the frame and get the emotions from the picture
     index = 1
+
+    x_y_array = []
+
     while cap.isOpened():
 
         ret, frame = cap.read()
@@ -290,20 +221,18 @@ def main():
                     if DEBUG:
                         print("x: " + str(x) + ", y: " + str(y))
 
-                    # checking that the json file is not too large -> if so -> handling ot
-                    check_json_file_size()
-
-                    # insert the current x,y to the json file
-                    updated = insert_points_to_json_file(x, y)
-
-                    if updated:
-                        print("updated json file")
+                    # appending the x,y to the list for posting to the messaging queue later
+                    x_y_array.append((x,y))
 
             cv2.imshow("demo", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
         index += 1
+
+        if index % NUMBER_OF_X_Y_TO_POST == 0:
+            print("posting the x,y array to the messaging queue...")
+
 
 
 def insert_x_y(x,y, array_list):
