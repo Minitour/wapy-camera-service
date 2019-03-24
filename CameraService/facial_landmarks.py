@@ -7,6 +7,7 @@ import math
 import datetime
 import os
 import zipfile
+import pyrealsense2 as rs
 
 DEBUG = True
 POSSIBLE_CAMERAS = 1
@@ -143,10 +144,22 @@ def save_frame_as_picture(frame, x, y):
 
 
 
+def init_realsense_camera():
+
+    pipeline = rs.pipeline()
+    config = rs.config()
+    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+
+    pipeline.start(config)
+
+    return pipeline
+
 def main():
     # return
 
-    external = False
+    external = True
+    index_for_camera = 1
 
     # getting all available cameras that are connected to the compute stick
     cameras = get_available_cameras()
@@ -155,7 +168,10 @@ def main():
     # to get the external camera you can add True parameter to this function and also select the number of the camera
     # if you do not specific any index/external parameter -> will get the default one (computer)
     # example: cap = get_default_camera(cameras, 1, True)
-    cap = get_default_camera(cameras, external)
+    cap = get_default_camera(cameras, index_for_camera, external)
+
+    if external:
+        cap = init_realsense_camera()
 
     # if the external param is True -> cap might be equal to [] if the function cant find a connected camera
     if (cap is None) or (not cap.isOpened()):
@@ -174,13 +190,24 @@ def main():
 
     x_y_array = []
 
-    while cap.isOpened():
+    while True:
 
-        ret, frame = cap.read()
+        try:
+            ret, frame = cap.read()
+            width = cap.get(3)
+            height = cap.get(4)
 
-        # getting the width and height from the video
-        width = cap.get(3)
-        height = cap.get(4)
+        except Exception as error:
+            print(error)
+            ret = True
+            frames = cap.wait_for_frames()
+            depth_frame = frames.get_depth_frame()
+            frame = frames.get_color_frame()
+            width = 640
+            height = 480
+
+            if not frame or not depth_frame:
+                continue
 
         if DEBUG:
             print(width)
