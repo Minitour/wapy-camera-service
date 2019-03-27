@@ -155,8 +155,30 @@ def init_realsense_camera():
 
     return pipeline
 
+
+def clear_images_folder():
+    for the_file in os.listdir(path_for_pictures):
+        file_path = os.path.join(path_for_pictures, the_file)
+        try:
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            print(e)
+
+
 def main():
     # return
+    import argparse
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--aws_access_key", required=True, help="the access key for aws")
+    parser.add_argument("--aws_secret_access_key", required=True, help="the secret access key for aws")
+    parser.add_argument("--region", required=True, help="the region for aws connection")
+    parser.add_argument("--data_stream_name", required=True, help="the kinesis stream name for posting data")
+    parser.add_argument("--images_stream_name", required=True, help="the kinesis stream name for posting images")
+
+    args = parser.parse_args()
 
     external = True
     index_for_camera = 1
@@ -216,6 +238,8 @@ def main():
         # we are still getting video from the camera
         if ret:
 
+            # TODO: convert the frame param into image rgb
+
             # getting the face rectangle from the frame
             face_rects = detector(frame, 0)
 
@@ -249,17 +273,32 @@ def main():
                         print("x: " + str(x) + ", y: " + str(y))
 
                     # appending the x,y to the list for posting to the messaging queue later
-                    x_y_array.append((x,y))
+                    x_y_array = insert_x_y(x,y, x_y_array)
 
-            cv2.imshow("demo", frame)
+            cv2.imshow("WAPY", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
         index += 1
 
         if index % NUMBER_OF_X_Y_TO_POST == 0:
-            print("posting the x,y array to the messaging queue...")
+            print("starting posting points and images to kinesis")
 
+            # passing the array to the kinesis handler for posting
+            import kinesis_handler
+            kinesis_handler.start_posting(args.aws_access_key,              # aws access key
+                                          args.aws_secret_access_key,       # secret access key
+                                          args.region,                      # region
+                                          args.data_stream_name,            # points stream name
+                                          args.images_stream_name,          # images stream name
+                                          json.dumps(x_y_array),            # array of points
+                                          path_for_pictures)                # path to the pictures
+
+            # init the array for the new posts
+            x_y_array = []
+            clear_images_folder()
+
+            print("end of posting data and images --> new array of points started and images folder cleared")
 
 
 def insert_x_y(x,y, array_list):
@@ -305,7 +344,7 @@ def check_close_pixel(pxl, array_list):
     # if we did not find any pixel close enough then
     # we will add to the array list the new x,y we got from the main function
     if not found:
-        array_list.append({"x": pxl[0], "y": pxl[1], "value": pxl[2], "radius": 40})
+        array_list.append({"x": pxl[0], "y": pxl[1], "value": pxl[2]})
 
     return array_list
 
