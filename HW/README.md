@@ -2,7 +2,7 @@
 
 ### Pre-requirements for installation
 
-To install Ubuntu on Intel compute stick we will need a bootable 'USB' drive with at least '2GB' of storage, keyboard, mouse and a USB hub.
+To install Ubuntu on Intel compute stick we will need a bootable ׳USB׳ drive with at least '2GB' of storage, keyboard, mouse and a USB hub.
 
 We will also need to make the USB drive bootable and we will do that with 'Rufus'. The installation of 'Rufus' is in this repo under HW folder.
 
