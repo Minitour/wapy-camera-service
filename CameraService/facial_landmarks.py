@@ -6,15 +6,24 @@ import json
 import math
 import datetime
 import os
-import zipfile
+import subprocess
 import pyrealsense2 as rs
 import re
 
-DEBUG = True
+DEBUG = False
+DEEP_DEBUG = False
+
+# camera constants
 POSSIBLE_CAMERAS = 1
+UP_DOWN_ANGLE = 60
+LEFT_RIGHT_ANGLE = 60
+X_ANGLE = UP_DOWN_ANGLE / 2
+Y_ANGLE = LEFT_RIGHT_ANGLE / 2
+
+# post processing constants
 DISTANCE = 1
-NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 100
-NUMBER_OF_X_Y_TO_POST = 10
+NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 1000000000000000
+NUMBER_OF_X_Y_TO_POST = 1000000000000
 ALLOWED_X_Y_DISTANCE = 10
 
 path_for_pictures = "./pictures_for_analysis/"
@@ -124,6 +133,7 @@ class DeviceManager:
         self._enabled_devices = {}
         self._config = pipeline_configuration
         self._frame_counter = 0
+        self._profile_pipe = ""
 
 
     def enable_device(self, device_serial):
@@ -144,6 +154,7 @@ class DeviceManager:
         self._config.enable_device(device_serial)
         pipeline_profile = pipeline.start(self._config)
 
+        self._profile_pipe = pipeline_profile
         self._enabled_devices[device_serial] = (Device(pipeline, pipeline_profile))
 
 
@@ -152,7 +163,7 @@ class DeviceManager:
         Enable all the Intel RealSense Devices which are connected to the PC
 
         """
-        print(str(len(self._available_devices)) + " devices have been found")
+        print("{} devices have been found".format(len(self._available_devices)))
 
         for serial in self._available_devices:
             self.enable_device(serial)
@@ -205,6 +216,9 @@ class DeviceManager:
     def get_available_camera(self):
         return len(self._available_devices)
 
+    def get_pipeline(self):
+        return self._profile_pipe
+
 
 def get_config_for_camera():
 
@@ -228,6 +242,10 @@ def get_frames_from_all_cameras(device_manager, number_of_devices):
 
 
 def main():
+    global DISTANCE
+    global DEBUG
+    global DEEP_DEBUG
+
     # return
     import argparse
 
@@ -238,6 +256,8 @@ def main():
     parser.add_argument("--region", required=True, help="the region for aws connection")
     parser.add_argument("--data_stream_name", required=True, help="the kinesis stream name for posting data")
     parser.add_argument("--images_stream_name", required=True, help="the kinesis stream name for posting images")
+    parser.add_argument("--debug", action="store_true", help="debug level")
+    parser.add_argument("--deep_debug", action="store_true", help="deeper debug level")
 
     args = parser.parse_args()
 
@@ -264,6 +284,13 @@ def main():
 
     x_y_array = []
 
+    # set debug if stated
+    DEBUG = args.debug if args.debug is not None else DEBUG
+    print("debug mode: {}".format(DEBUG))
+
+    DEEP_DEBUG = args.deep_debug if args.deep_debug is not None else DEEP_DEBUG
+    print("deep debug mode, will print in console: {}".format(DEEP_DEBUG))
+
     while True:
 
         # getting all frames from cameras
@@ -276,6 +303,7 @@ def main():
         # we are still getting video from the camera
         if ret:
             color_frame = frames_per_camera[0]['color_frame']
+            depth_frame = frames_per_camera[0]['depth_frame']
             # getting the face rectangle from the frame
             face_rects = detector(color_frame, 0)
 
@@ -290,13 +318,51 @@ def main():
                     # estimate the head pose of the specific face
                     reprojectdst, euler_angle = get_head_pose(shape)
 
+                    # init vars for measuring distance to object
+                    dis_start = 0
+                    dis_middle = 0
+                    dis_end = 0
+
+                    # getting the middle x,y of the shape detected
+                    start_x, start_y = shape[0][0], shape[0][1]
+                    middle_x, middle_y = shape[int(len(shape) / 2)][0], shape[int(len(shape) / 2)][1]
+                    end_x, end_y = shape[-1][0], shape[-1][1]
+
                     # draw points for the face
                     for (x, y) in shape:
-                        cv2.circle(color_frame, (x, y), 1, (0, 0, 255), -1)
+
+                        if DEEP_DEBUG:
+                            print("start x, y: {} , {}".format(start_x, start_y))
+                            print("middle x, y: {} , {}".format(middle_x, middle_y))
+                            print("end x, y: {} , {}".format(end_x, end_y))
+
+                            cv2.circle(color_frame, (x, y), 1, (0, 0, 255), -1)
+
+                    # getting the distance to the first x,y
+                    if start_x is not None and start_y is not None:
+                        dis_start = depth_frame.get_distance(start_x, start_y)
+
+                    # getting the distance to the middle x,y
+                    if middle_x is not None and middle_y is not None:
+                        dis_middle = depth_frame.get_distance(middle_x, middle_y)
+
+                    # getting the distance to the end x,y
+                    if end_x is not None and end_y is not None:
+                        dis_end = depth_frame.get_distance(end_x, end_y)
+
+                    # getting the max distance -> avoiding 0
+                    dis = max(dis_start, dis_middle, dis_end)
+
+                    # return value of too far objects is 0
+                    # if no object detected because he is too far -> will put 1 as distance
+                    distance_to_object = dis if dis != 0 else DISTANCE
+
+                    if DEEP_DEBUG:
+                        print("distance to object: {}".format(distance_to_object))
 
                     # calculate where the observer is looking
-                    x = width/2 - int((euler_angle[1, 0]/30)*(width/2)*(DISTANCE)) # the 30 parameter should be the angel up and down of the camera
-                    y = height/2 + int((euler_angle[0, 0]/30)*(height/2)*(DISTANCE))
+                    x = width/2 - int((euler_angle[1, 0]/X_ANGLE)*(width/2)*distance_to_object)
+                    y = height/2 + int((euler_angle[0, 0]/Y_ANGLE)*(height/2)*distance_to_object)
 
                     # after 1000 frames we are saving one photo
                     if index % NUMBER_OF_FRAMES_TO_SAVE_PICTURE == 0:
@@ -304,8 +370,8 @@ def main():
 
                     cv2.circle(color_frame, (int(x), int(y)), 3, (10, 20, 20), 2)
 
-                    if DEBUG:
-                        print("x: " + str(x) + ", y: " + str(y))
+                    if DEEP_DEBUG:
+                        print("x: {}, y: {}".format(x, y))
 
                     # appending the x,y to the list for posting to the messaging queue later
                     x_y_array = insert_x_y(x,y, x_y_array)
@@ -318,7 +384,7 @@ def main():
         index += 1
 
         if index % NUMBER_OF_X_Y_TO_POST == 0:
-            print("starting posting points and images to kinesis")
+            print("starting posting points and images to kinesis at: {}".format(datetime.datetime.now()))
 
             # passing the array to the kinesis handler for posting
             import kinesis_handler
@@ -332,12 +398,12 @@ def main():
 
             # init the array for the new posts
             x_y_array = []
+            print("\nend posting data and images at: {}".format(datetime.datetime.now()))
+
+            print("\nstart cleaning images folder...")
             clear_images_folder()
-
-            print("end of posting data and images --> new array of points started and images folder cleared")
-
-
-
+            print("images folder is empty now...")
+#--aws_access_key "" --aws_secret_access_key --region --data_stream_name --images_stream_name --data --images
 
 
 
@@ -361,6 +427,7 @@ def get_faces_from_detector(color_depth_frames, detector):
             faces.extend(face_rects)
 
     return faces
+
 
 def get_head_pose(shape):
     image_pts = np.float32([shape[17], shape[21], shape[22], shape[26], shape[36],
@@ -400,7 +467,7 @@ def save_frame_as_picture(frame, x, y):
     cv2.imwrite(path_for_pictures + timestamp + "_" + str(x) + "_" + str(y) + ".jpg", frame)
 
     if DEBUG:
-        print("saved photo with timestamp:" + str(timestamp) + ".jpg")
+        print("saved photo with timestamp: {}.jpg".format(timestamp))
 
 
 def clear_images_folder():
