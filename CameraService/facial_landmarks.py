@@ -373,6 +373,10 @@ def main():
                     if DEEP_DEBUG:
                         print("x: {}, y: {}".format(x, y))
 
+                    # this function call will do one of 2 options:
+                    # will update the end timestamp of x,y detected -> will assign new datetime.now() -> extending time
+                    # will init new timestamp for x,y with start_timestamp -> will reset if there is no faces detected
+                    # until the next time some faces detected
                     # appending the x,y to the list for posting to the messaging queue later
                     x_y_array = insert_x_y(x,y, x_y_array)
 
@@ -396,7 +400,7 @@ def main():
                                           json.dumps(x_y_array),            # array of points
                                           path_for_pictures)                # path to the pictures
 
-            # init the array for the new posts
+            # init the array of x,y and timestamps for the new posts
             x_y_array = []
             print("\nend posting data and images at: {}".format(datetime.datetime.now()))
 
@@ -493,6 +497,9 @@ def insert_x_y(x,y, array_list):
             # got the same x,y as in the json file and will add 1 to the value attribute
             entered = True
             value['value'] += 1
+
+            # if we found the x,y in hand -> update the end looking time at object
+            value['end_timestamp'] = str(datetime.datetime.now())
             break
 
     # if the current x,y is not in the json file -> will check if it's close enough to the product
@@ -517,13 +524,21 @@ def check_close_pixel(pxl, array_list):
 
                 # add 1 to the pixel in the position we found
                 value['value'] += pxl[2]
+
+                # if found a relavent object -> updating the end timestamp -> duration for object
+                value['end_timestamp'] = str(datetime.datetime.now())
                 found = True
                 break
 
     # if we did not find any pixel close enough then
     # we will add to the array list the new x,y we got from the main function
+    # will init the timestamp for new object
     if not found:
-        array_list.append({"x": pxl[0], "y": pxl[1], "value": pxl[2]})
+        array_list.append({"x": pxl[0],
+                           "y": pxl[1],
+                           "value": pxl[2],
+                           "start_timestamp": str(datetime.datetime.now()),
+                           "end_timestamp": None})
 
     return array_list
 
