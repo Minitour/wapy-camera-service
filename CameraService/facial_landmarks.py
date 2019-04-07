@@ -5,6 +5,7 @@ from imutils import face_utils
 import json
 import math
 import datetime
+from datetime import timedelta
 import os
 import subprocess
 import pyrealsense2 as rs
@@ -25,6 +26,10 @@ DISTANCE = 1
 NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 1000000000000000
 NUMBER_OF_X_Y_TO_POST = 1000000000000
 ALLOWED_X_Y_DISTANCE = 10
+TIME_DIFFERENCE_BEWTEEN_DETECTING = 4
+
+ATTRIBUTE_NAME = "duration_so_far"
+
 
 path_for_pictures = "./pictures_for_analysis/"
 face_landmark_path = './shape_predictor_68_face_landmarks.dat'
@@ -390,6 +395,9 @@ def main():
         if index % NUMBER_OF_X_Y_TO_POST == 0:
             print("starting posting points and images to kinesis at: {}".format(datetime.datetime.now()))
 
+            # sorting the array by the duration_so_far attribute (duration_so_far the sum of all durations)
+            valued_json = finilize_to_send(x_y_array)
+
             # passing the array to the kinesis handler for posting
             import kinesis_handler
             kinesis_handler.start_posting(args.aws_access_key,              # aws access key
@@ -397,7 +405,7 @@ def main():
                                           args.region,                      # region
                                           args.data_stream_name,            # points stream name
                                           args.images_stream_name,          # images stream name
-                                          json.dumps(x_y_array),            # array of points
+                                          json.dumps(valued_json),            # array of points
                                           path_for_pictures)                # path to the pictures
 
             # init the array of x,y and timestamps for the new posts
@@ -418,6 +426,11 @@ def main():
 #                                                                                                        #
 #                                                                                                        #
 ##########################################################################################################
+
+
+
+## -------------------------------------- face recognition helpers ------------------------------------ ##
+
 
 def get_faces_from_detector(color_depth_frames, detector):
     faces = []
@@ -453,6 +466,8 @@ def get_head_pose(shape):
     return reprojectdst, euler_angle
 
 
+## -------------------------------------- pictures proccessing helpers ------------------------------------ ##
+
 def create_time_stamp():
 
     raw_timestamp = datetime.datetime.now()
@@ -484,6 +499,11 @@ def clear_images_folder():
             print(e)
 
 
+
+## -------------------------------------- handlers for analysis and values ------------------------------------ ##
+
+
+
 def insert_x_y(x,y, array_list):
 
     # indicator if we have already entered the point
@@ -496,10 +516,10 @@ def insert_x_y(x,y, array_list):
 
             # got the same x,y as in the json file and will add 1 to the value attribute
             entered = True
-            value['value'] += 1
 
             # if we found the x,y in hand -> update the end looking time at object
-            value['end_timestamp'] = str(datetime.datetime.now())
+            value = calculate_values(value)
+
             break
 
     # if the current x,y is not in the json file -> will check if it's close enough to the product
@@ -522,11 +542,9 @@ def check_close_pixel(pxl, array_list):
             # we are checking if the y is in the allowed range of pixel to another pixel
             if pxl[1] + ALLOWED_X_Y_DISTANCE <= value['y'] or pxl[1] - ALLOWED_X_Y_DISTANCE >= value['y']:
 
-                # add 1 to the pixel in the position we found
-                value['value'] += pxl[2]
+                # this call will check if the object needs to be updated, initialized and calculate the values from it
+                value = calculate_values(value)
 
-                # if found a relavent object -> updating the end timestamp -> duration for object
-                value['end_timestamp'] = str(datetime.datetime.now())
                 found = True
                 break
 
@@ -534,27 +552,79 @@ def check_close_pixel(pxl, array_list):
     # we will add to the array list the new x,y we got from the main function
     # will init the timestamp for new object
     if not found:
-        array_list.append({"x": pxl[0],
-                           "y": pxl[1],
-                           "value": pxl[2],
-                           "start_timestamp": str(datetime.datetime.now()),
-                           "end_timestamp": None})
+        array_list.append({"x": pxl[0],                                     # int
+                           "y": pxl[1],                                     # int
+                           "value": pxl[2],                                 # int
+                           "start_timestamp": datetime.datetime.now(),      # datetime
+                           "end_timestamp": None,                           # datetime
+                           "duration_so_far": 0.0,                          # seconds for object <float>
+                           "timers": []})                                   # timers <array<valued_json>> values_json -> function calculate_values()
 
     return array_list
 
 
-# # function for adjust the list in order of value
-# def finilize_to_send(list_to_order):
-#
-#     return list_to_order.sort(key=get_value)
-#
-#
-# # getting the value of the current object
-# def get_value(object):
-#
-#     if (not object) or (object is None):
-#         return 0
-#     return object['value']
+def calculate_values(value):
+
+    global TIME_DIFFERENCE_BEWTEEN_DETECTING
+
+    temp_value = value
+    current_timestamp = datetime.datetime.now()
+
+    if temp_value['end_timestamp'] is not None:
+        if temp_value['end_timestamp'] + timedelta(seconds=TIME_DIFFERENCE_BEWTEEN_DETECTING) < current_timestamp:
+
+            # end timestamp is not none but the session of looking is over -> need to calulate and start new session
+            timer = {
+                "start_timestamp": temp_value['start_timestamp'],
+                "end_timestamp": temp_value['end_timestamp']
+            }
+
+            # calculate the time diff and convert into seconds to add to the duration_so_far
+            delta = temp_value['end_timestamp'] - temp_value['start_timestamp']
+            seconds_spent_on_product = delta.total_seconds()
+
+            # assign the values into object
+            temp_value['duration_so_far'] += seconds_spent_on_product
+            temp_value['timers'].append(timer)
+
+            # starting new session -> need to put the current timestamp as start and None as end for init
+            temp_value['start_timestamp'] = current_timestamp
+            temp_value['end_timestamp'] = None
+
+        else:
+            # we are still in range of this session -> will put the current timestamp as end to
+            # extend the time spent on this object
+            temp_value['end_timestamp'] = current_timestamp
+
+    elif temp_value['start_timestamp'] + timedelta(seconds=TIME_DIFFERENCE_BEWTEEN_DETECTING) < current_timestamp:
+        # means we need to start new timer for this object
+        # end_timestamp here is none
+        temp_value['start_timestamp'] = current_timestamp
+
+    else:
+
+        # means we need to update the end_timestamp to the current_timestamp to
+        # extend the duration for the product when we calculate the values for json
+        temp_value['end_timestamp'] = current_timestamp
+
+    return temp_value
+
+
+# function for adjust the list in order of value by attribute
+def finilize_to_send(list_to_order):
+
+    return list_to_order.sort(key=get_value)
+
+
+# getting the value of the current object
+def get_value(object):
+
+    global ATTRIBUTE_NAME
+
+    if (not object) or (object is None):
+        return 0
+    return object[ATTRIBUTE_NAME]
+
 
 if __name__ == '__main__':
     main()
