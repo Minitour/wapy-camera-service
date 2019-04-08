@@ -3,12 +3,13 @@ import dlib
 import numpy as np
 from imutils import face_utils
 import json
-import math
+import requests
+from requests.exceptions import RequestException
 import datetime
 from datetime import timedelta
 import os
 import subprocess
-import pyrealsense2 as rs
+# import pyrealsense2 as rs
 import re
 
 DEBUG = False
@@ -24,12 +25,15 @@ Y_ANGLE = LEFT_RIGHT_ANGLE / 2
 # post processing constants
 DISTANCE = 1
 NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 1000000000000000
-NUMBER_OF_X_Y_TO_POST = 1000000000000
-ALLOWED_X_Y_DISTANCE = 10
+NUMBER_OF_PRODUCTS_TO_POST = 1000000000000
 TIME_DIFFERENCE_BEWTEEN_DETECTING = 4
 
 ATTRIBUTE_NAME = "duration_so_far"
 
+# constants for mmo data
+headers = {"Content-Type": "application/json"}
+SUCCESS = 200
+NUMBER_OF_OBJECTS_IN_WINDOW = 0
 
 path_for_pictures = "./pictures_for_analysis/"
 face_landmark_path = './shape_predictor_68_face_landmarks.dat'
@@ -80,7 +84,6 @@ line_pairs = [[0, 1], [1, 2], [2, 3], [3, 0],
               [0, 4], [1, 5], [2, 6], [3, 7]]
 
 
-
 ##########################################################################################################
 #                                                                                                        #
 #                                                                                                        #
@@ -113,7 +116,8 @@ def enumerate_connected_devices(context):
     """
     connect_device = []
     for d in context.devices:
-        if d.get_info(rs.camera_info.name).lower() != 'platform camera' and not re.search("(?<=d430).*", d.get_info(rs.camera_info.name).lower()):
+        if d.get_info(rs.camera_info.name).lower() != 'platform camera' and not re.search("(?<=d430).*", d.get_info(
+                rs.camera_info.name).lower()):
             connect_device.append(d.get_info(rs.camera_info.serial_number))
     return connect_device
 
@@ -140,7 +144,6 @@ class DeviceManager:
         self._frame_counter = 0
         self._profile_pipe = ""
 
-
     def enable_device(self, device_serial):
         """
         Enable an Intel RealSense Device
@@ -162,7 +165,6 @@ class DeviceManager:
         self._profile_pipe = pipeline_profile
         self._enabled_devices[device_serial] = (Device(pipeline, pipeline_profile))
 
-
     def enable_all_devices(self, enable_ir_emitter=False):
         """
         Enable all the Intel RealSense Devices which are connected to the PC
@@ -172,7 +174,6 @@ class DeviceManager:
 
         for serial in self._available_devices:
             self.enable_device(serial)
-
 
     def poll_frames(self, device_serial):
         """
@@ -192,7 +193,6 @@ class DeviceManager:
 
         return color_frame, depth_frame
 
-
     def get_depth_shape(self):
         """ Retruns width and height of the depth stream for one arbitrary device
 
@@ -211,7 +211,6 @@ class DeviceManager:
                     height = stream.as_video_stream_profile().height()
         return width, height
 
-
     def disable_streams(self):
         self._config.disable_all_streams()
 
@@ -226,7 +225,6 @@ class DeviceManager:
 
 
 def get_config_for_camera():
-
     config = rs.config()
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
@@ -235,7 +233,6 @@ def get_config_for_camera():
 
 
 def get_frames_from_all_cameras(device_manager, number_of_devices):
-
     frames = []
 
     for i in range(number_of_devices):
@@ -287,7 +284,11 @@ def main():
     # index when we will take the frame and get the emotions from the picture
     index = 1
 
-    x_y_array = []
+    # getting from the mmo the info we need for the window
+    mmo_data = get_json_model_from_mmo("", "")
+
+    # init the product list with the json data for posting to kinesis
+    product_list = []
 
     # set debug if stated
     DEBUG = args.debug if args.debug is not None else DEBUG
@@ -333,14 +334,15 @@ def main():
                     middle_x, middle_y = shape[int(len(shape) / 2)][0], shape[int(len(shape) / 2)][1]
                     end_x, end_y = shape[-1][0], shape[-1][1]
 
+                    if DEEP_DEBUG:
+                        print("start x, y: {} , {}".format(start_x, start_y))
+                        print("middle x, y: {} , {}".format(middle_x, middle_y))
+                        print("end x, y: {} , {}".format(end_x, end_y))
+
                     # draw points for the face
                     for (x, y) in shape:
 
                         if DEEP_DEBUG:
-                            print("start x, y: {} , {}".format(start_x, start_y))
-                            print("middle x, y: {} , {}".format(middle_x, middle_y))
-                            print("end x, y: {} , {}".format(end_x, end_y))
-
                             cv2.circle(color_frame, (x, y), 1, (0, 0, 255), -1)
 
                     # getting the distance to the first x,y
@@ -365,58 +367,76 @@ def main():
                     if DEEP_DEBUG:
                         print("distance to object: {}".format(distance_to_object))
 
-                    # calculate where the observer is looking
-                    x = width/2 - int((euler_angle[1, 0]/X_ANGLE)*(width/2)*distance_to_object)
-                    y = height/2 + int((euler_angle[0, 0]/Y_ANGLE)*(height/2)*distance_to_object)
+                    # getting the x, y angles from the euler angles
+                    x_angle = euler_angle[1, 0]
+                    y_angle = euler_angle[0, 0]
 
-                    # after 1000 frames we are saving one photo
-                    if index % NUMBER_OF_FRAMES_TO_SAVE_PICTURE == 0:
-                        save_frame_as_picture(color_frame, x, y)
+                    # determine if the person wa looking to the left or right, up or down
+                    left_right = "RIGHT" if x_angle >= 0 else "LEFT"
+                    up_down = "UP" if y_angle >= 0 else "DOWN"
 
-                    cv2.circle(color_frame, (int(x), int(y)), 3, (10, 20, 20), 2)
+                    # getting the distance from camera for each axe
+                    x_distance_camera_object = get_axe_distance_to_object(distance_to_object, x_angle)
+                    y_distance_camera_object = get_axe_distance_to_object(distance_to_object, y_angle)
 
-                    if DEEP_DEBUG:
-                        print("x: {}, y: {}".format(x, y))
+                    # getting the distance from camera to object
+                    camera_object_distance = calculate_distance(x_distance_camera_object, y_distance_camera_object)
 
-                    # this function call will do one of 2 options:
-                    # will update the end timestamp of x,y detected -> will assign new datetime.now() -> extending time
-                    # will init new timestamp for x,y with start_timestamp -> will reset if there is no faces detected
-                    # until the next time some faces detected
-                    # appending the x,y to the list for posting to the messaging queue later
-                    x_y_array = insert_x_y(x,y, x_y_array)
+                    # check if the distance and direction fit any of the model object
+                    found_object = fit_model_object(mmo_data, camera_object_distance, left_right, up_down)
+
+                    if found_object != "":
+                        # means we found an object that the observer was looking at
+                        index += 1
+
+                        # this function call will do one of 2 options:
+                        # will update end timestamp if product detected -> will assign new datetime.now() -> extending time
+                        # will init new timestamp for x,y with start_timestamp -> will reset if there is no faces detected
+                        # until the next time some faces detected
+                        product_list = insert_found_product(found_object, product_list)
+
+                        # after 1000 frames we are saving one photo
+                        if not DEEP_DEBUG and index % NUMBER_OF_FRAMES_TO_SAVE_PICTURE == 0:
+                            save_frame_as_picture(color_frame, found_object)
+
+                        if DEEP_DEBUG:
+                            print("found object with id: {}".format(found_object))
+
+                    else:
+                        if DEEP_DEBUG:
+                            print("no object found with distance from camera: {}".format(camera_object_distance))
 
             cv2.imshow("WAPY", color_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 device_manager.disable_streams()
                 break
 
-        index += 1
-
-        if index % NUMBER_OF_X_Y_TO_POST == 0:
+        if index % NUMBER_OF_PRODUCTS_TO_POST == 0:
             print("starting posting points and images to kinesis at: {}".format(datetime.datetime.now()))
 
             # sorting the array by the duration_so_far attribute (duration_so_far the sum of all durations)
-            valued_json = finilize_to_send(x_y_array)
+            valued_json = finilize_to_send(product_list)
 
             # passing the array to the kinesis handler for posting
             import kinesis_handler
-            kinesis_handler.start_posting(args.aws_access_key,              # aws access key
-                                          args.aws_secret_access_key,       # secret access key
-                                          args.region,                      # region
-                                          args.data_stream_name,            # points stream name
-                                          args.images_stream_name,          # images stream name
-                                          json.dumps(valued_json),            # array of points
-                                          path_for_pictures)                # path to the pictures
+            kinesis_handler.start_posting(args.aws_access_key,  # aws access key
+                                          args.aws_secret_access_key,  # secret access key
+                                          args.region,  # region
+                                          args.data_stream_name,  # points stream name
+                                          args.images_stream_name,  # images stream name
+                                          json.dumps(valued_json),  # array of points
+                                          path_for_pictures)  # path to the pictures
 
             # init the array of x,y and timestamps for the new posts
-            x_y_array = []
+            product_list = []
             print("\nend posting data and images at: {}".format(datetime.datetime.now()))
 
             print("\nstart cleaning images folder...")
             clear_images_folder()
             print("images folder is empty now...")
-#--aws_access_key "" --aws_secret_access_key --region --data_stream_name --images_stream_name --data --images
 
+
+# --aws_access_key "" --aws_secret_access_key --region --data_stream_name --images_stream_name --data --images
 
 
 ##########################################################################################################
@@ -426,7 +446,6 @@ def main():
 #                                                                                                        #
 #                                                                                                        #
 ##########################################################################################################
-
 
 
 ## -------------------------------------- face recognition helpers ------------------------------------ ##
@@ -469,7 +488,6 @@ def get_head_pose(shape):
 ## -------------------------------------- pictures proccessing helpers ------------------------------------ ##
 
 def create_time_stamp():
-
     raw_timestamp = datetime.datetime.now()
 
     # example: raw_timestamp -> 2019-03-12 08:14:47.501562
@@ -478,12 +496,11 @@ def create_time_stamp():
     return timestamp
 
 
-def save_frame_as_picture(frame, x, y):
-
+def save_frame_as_picture(frame, product):
     timestamp = create_time_stamp()
 
     # adding the timestamp and the x,y position we are attaching to the frame
-    cv2.imwrite(path_for_pictures + timestamp + "_" + str(x) + "_" + str(y) + ".jpg", frame)
+    cv2.imwrite(path_for_pictures + timestamp + "_" + str(product) + ".jpg", frame)
 
     if DEBUG:
         print("saved photo with timestamp: {}.jpg".format(timestamp))
@@ -499,72 +516,62 @@ def clear_images_folder():
             print(e)
 
 
-
 ## -------------------------------------- handlers for analysis and values ------------------------------------ ##
 
 
+def insert_found_product(product_id, product_list):
 
-def insert_x_y(x,y, array_list):
+    '''
+        product_list = [
+            {
+                "product_id": "",
+                "value": "",
+                "start_timestamp": "",
+                "end_timestamp": "",
+                "duration_so_far": "",
+                "timers": []
+            }
+        ]
+    '''
 
     # indicator if we have already entered the point
     entered = False
 
-    # checking if the current x,y is already in the json file
-    # if so -> we will add to the number of views for that product
-    for value in array_list:
-        if value['x'] == x and value['y'] == y:
+    # checking if the current product is already in the list
+    # if so -> we will calculate the values for it: 'value', 'duration_so_far', timestamps...
+    for product in product_list:
 
-            # got the same x,y as in the json file and will add 1 to the value attribute
+        if product['product_id'] == product_id:
+
+            # save and remove the product from the list
+            temp_product = product
+            product_list.remove(product)
+
+            # change the indicator that we found the object in the list
             entered = True
 
-            # if we found the x,y in hand -> update the end looking time at object
-            value = calculate_values(value)
+            # if we found the object in hand -> calculate the values and return the updated product
+            updated_product = calculate_values(temp_product)
+            product_list.append(updated_product)
 
             break
 
-    # if the current x,y is not in the json file -> will check if it's close enough to the product
+    # means this is a new product in the list -> append with init values
     if not entered:
-        array_list = check_close_pixel([x,y,1], array_list)
 
-    # returning the new array list
-    return array_list
+        product_list.append({
+            "product_id": product_id,
+            "value": 1,
+            "start_timestamp": datetime.datetime.now(),
+            "end_timestamp": None,
+            "duration_so_far": 0.0,
+            "timers": []
+        })
 
-
-def check_close_pixel(pxl, array_list):
-
-    # checking if the current x,y is close to another pixel
-    found = False
-    for value in array_list:
-
-        # we are checking if the x is in the allowed range of pixel to another pixel
-        if pxl[0] + ALLOWED_X_Y_DISTANCE <= value['x'] or pxl[0] - ALLOWED_X_Y_DISTANCE >= value['x']:
-
-            # we are checking if the y is in the allowed range of pixel to another pixel
-            if pxl[1] + ALLOWED_X_Y_DISTANCE <= value['y'] or pxl[1] - ALLOWED_X_Y_DISTANCE >= value['y']:
-
-                # this call will check if the object needs to be updated, initialized and calculate the values from it
-                value = calculate_values(value)
-
-                found = True
-                break
-
-    # if we did not find any pixel close enough then
-    # we will add to the array list the new x,y we got from the main function
-    # will init the timestamp for new object
-    if not found:
-        array_list.append({"x": pxl[0],                                     # int
-                           "y": pxl[1],                                     # int
-                           "value": pxl[2],                                 # int
-                           "start_timestamp": datetime.datetime.now(),      # datetime
-                           "end_timestamp": None,                           # datetime
-                           "duration_so_far": 0.0,                          # seconds for object <float>
-                           "timers": []})                                   # timers <array<valued_json>> values_json -> function calculate_values()
-
-    return array_list
+    return product_list
 
 
 def calculate_values(value):
-
     global TIME_DIFFERENCE_BEWTEEN_DETECTING
 
     temp_value = value
@@ -610,15 +617,30 @@ def calculate_values(value):
     return temp_value
 
 
+def get_axe_distance_to_object(distance_to_object, angle):
+    # calculate the angle in front of distance (90 - x_angle) -> distance_angle
+    distance_angle = 90 - angle
+
+    # formula: distance / sin(distance_angle) = x_distance / sin(x_angle) ->
+    # -> x_distance = distance * sin(x_angle) / sin(distance_angle)
+    x_distance = distance_to_object * np.sin(np.deg2rad(angle)) / np.sin(np.deg2rad(distance_angle))
+
+    return x_distance
+
+
+# this function will calculate the distance between the camera and the object
+def calculate_distance(x_axe, y_axe):
+    # sqrt(x_axe^2 + y_axe^2) -> from the imaginary triangle we created
+    return np.sqrt(np.power(x_axe, 2) + np.power(y_axe, 2))
+
+
 # function for adjust the list in order of value by attribute
 def finilize_to_send(list_to_order):
-
     return list_to_order.sort(key=get_value)
 
 
 # getting the value of the current object
 def get_value(object):
-
     global ATTRIBUTE_NAME
 
     if (not object) or (object is None):
@@ -626,5 +648,192 @@ def get_value(object):
     return object[ATTRIBUTE_NAME]
 
 
+## -------------------------------------- handlers for handling model ------------------------------------ ##
+
+def stab_window_data():
+    return True, {
+        "window": {
+            "start": {
+                "x": 0.2323,
+                "y": 1.234,
+                "z": 0.234
+            },
+            "end": {
+                "x": -4.34,
+                "y": 1.234,
+                "z": -3.234
+            }
+        },
+        "camera": {
+            "euler": {
+                "x": 0.2323,
+                "y": 0.234,
+                "z": 0.234
+            }
+        },
+        "objects": [
+            {
+                "id": "object_id",
+                "position": {
+                    "r": 0.2,
+                    "x": 0.5,
+                    "y": 0.5,
+                    "z": 0.5
+                }
+            }
+        ]
+    }
+
+
+# will get with an api call
+def get_json_model_from_mmo(auth, url):
+    global SUCCESS
+    global headers
+    global NUMBER_OF_OBJECTS_IN_WINDOW
+
+    if url == "":
+        NUMBER_OF_OBJECTS_IN_WINDOW = 1
+        return stab_window_data()
+
+    try:
+        response = requests.get(url, headers=headers, auth=auth)
+        code = response.status_code
+
+        if code == SUCCESS:
+            body = json.loads(response.text)
+
+            # setting the number of objects in window
+            NUMBER_OF_OBJECTS_IN_WINDOW = len(body['objects'])
+
+            return True, body
+
+        else:
+
+            return False, response.text
+
+    except RequestException as error:
+        if DEEP_DEBUG:
+            print("error message: {}".format(error))
+        return False, error.__str__()
+
+
+def fit_model_object(mmo_data, camera_object_distance, left_right, up_down):
+    destination_objects = get_camera_object_distance_mmo(mmo_data, left_right, up_down)
+
+    '''
+        destination_object = {
+                "object_id": object_id,             # string/int
+                "min_range": min_object_range,      # float
+                "max_range": max_object_range,      # float   
+                "left_right": left_right,           # string "LEFT" or "RIGHT"
+                "up_down": up_down                  # string "UP" or "DOWN"
+            }
+    '''
+    object_id = ""
+    for obj in destination_objects:
+        if obj['min_range'] <= camera_object_distance <= obj['max_range']:
+            object_id = obj['object_id']
+            break
+
+    return object_id
+
+
+def get_camera_object_distance_mmo(mmo_data, left_right, up_down):
+    objects = []
+
+    for m_d in mmo_data['objects']:
+
+        object_id = m_d['id']
+
+        # getting the values of the axes
+        positions = m_d['position']
+
+        # checking where the object if located by direction
+        temp_left_right = "RIGHT" if positions['x'] >= 0 else "LEFT"
+        temp_up_down = "DOWN" if positions['y'] <= 0 else "UP"
+
+        # we will calculate the distance from the end points of the object and get the max and min distances
+        object_left_point_distance = calculate_distance(positions['x'] - positions['r'], positions['y'])
+        object_right_point_distance = calculate_distance(positions['x'] + positions['r'], positions['y'])
+        object_up_point_distance = calculate_distance(positions['x'], positions['y'] - positions['r'])
+        object_down_point_distance = calculate_distance(positions['x'], positions['y'] + positions['r'])
+
+        if DEEP_DEBUG:
+            print("object_left_point_distance: {}".format(object_left_point_distance))
+            print("object_right_point_distance: {}".format(object_right_point_distance))
+            print("object_up_point_distance: {}".format(object_up_point_distance))
+            print("object_down_point_distance: {}".format(object_down_point_distance))
+
+        # assumption: the window is divided to 4, we will screen those irrelevant objects later is needed
+        # getting the min distance to object from camera
+        min_object_range = min(object_left_point_distance, object_right_point_distance, object_up_point_distance,
+                               object_down_point_distance)
+
+        # getting the max distance to object from camera
+        max_object_range = max(object_left_point_distance, object_right_point_distance, object_up_point_distance,
+                               object_down_point_distance)
+
+        new_mmo_data = {
+            "object_id": object_id,  # string/int
+            "min_range": min_object_range,  # float
+            "max_range": max_object_range,  # float
+            "left_right": temp_left_right,  # string "LEFT" or "RIGHT"
+            "up_down": temp_up_down  # string "UP" or "DOWN"
+        }
+
+        if DEEP_DEBUG:
+            print("new mmo data: {}".format(new_mmo_data))
+
+        objects.append(new_mmo_data)
+
+    # sorting the list for irrelevant objects
+    filtered_by_left_right = [o for o in objects if o['left_right'] == left_right]
+    filtered_by_up_down = [o for o in filtered_by_left_right if o['up_down'] == up_down]
+
+    final_list = filtered_by_up_down
+
+    return final_list
+
+
 if __name__ == '__main__':
     main()
+
+
+    ############ this is a test for the functions that handle the object calculations and matching #############
+    # to use this test:
+    #          adjust the distance_to_object, x_angle, y_angle to values you want to test
+    #          and run in this section instead of main()
+    #
+    #          the mmo_data will be stab and can be changed in function stab_window_data()
+
+    # distance_to_object = 1
+    #
+    #
+    # array_of_lookers = [
+    #     [15,15],[15,16],[15,17],[15,18],[15,19],[15,20],[15,21],[15,22],[15,23],[15,24],[15,25],[15,26],[15,27],[15,28],[15,29],[15,30]
+    # ]
+    # mmo_data_exists, mmo_data = get_json_model_from_mmo("","")
+    #
+    # for o in array_of_lookers:
+    #     print(o)
+    #     x_angle = o[0]
+    #     y_angle = o[1]
+    #
+    #     # determine if the person wa looking to the left or right, up or down
+    #     left_right = "RIGHT" if x_angle >= 0 else "LEFT"
+    #     up_down = "UP" if y_angle >= 0 else "DOWN"
+    #
+    #     # getting the distance from camera for each axe
+    #     x_distance_camera_object = get_axe_distance_to_object(distance_to_object, x_angle)
+    #     y_distance_camera_object = get_axe_distance_to_object(distance_to_object, y_angle)
+    #
+    #     # getting the distance from camera to object
+    #     camera_object_distance = calculate_distance(x_distance_camera_object, y_distance_camera_object)
+    #
+    #     # check if the distance and direction fit any of the model object
+    #     found_object = fit_model_object(mmo_data, camera_object_distance, left_right, up_down)
+    #
+    #     if found_object != "":
+    #         print("product found for angle: x_angle: {}, y_angle: {}, with id: {}".format(x_angle,y_angle,found_object))
+    #     else:
+    #         print("no product found for angles: x_angle:{}, y_angle: {}".format(x_angle, y_angle))
