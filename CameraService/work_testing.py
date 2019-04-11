@@ -84,7 +84,6 @@ line_pairs = [[0, 1], [1, 2], [2, 3], [3, 0],
               [0, 4], [1, 5], [2, 6], [3, 7]]
 
 
-
 ##########################################################################################################
 #                                                                                                        #
 #                                                                                                        #
@@ -117,7 +116,8 @@ def enumerate_connected_devices(context):
     """
     connect_device = []
     for d in context.devices:
-        if d.get_info(rs.camera_info.name).lower() != 'platform camera' and not re.search("(?<=d430).*", d.get_info(rs.camera_info.name).lower()):
+        if d.get_info(rs.camera_info.name).lower() != 'platform camera' and not re.search("(?<=d430).*", d.get_info(
+                rs.camera_info.name).lower()):
             connect_device.append(d.get_info(rs.camera_info.serial_number))
     return connect_device
 
@@ -144,7 +144,6 @@ class DeviceManager:
         self._frame_counter = 0
         self._profile_pipe = ""
 
-
     def enable_device(self, device_serial):
         """
         Enable an Intel RealSense Device
@@ -166,7 +165,6 @@ class DeviceManager:
         self._profile_pipe = pipeline_profile
         self._enabled_devices[device_serial] = (Device(pipeline, pipeline_profile))
 
-
     def enable_all_devices(self, enable_ir_emitter=False):
         """
         Enable all the Intel RealSense Devices which are connected to the PC
@@ -176,7 +174,6 @@ class DeviceManager:
 
         for serial in self._available_devices:
             self.enable_device(serial)
-
 
     def poll_frames(self, device_serial):
         """
@@ -196,7 +193,6 @@ class DeviceManager:
 
         return color_frame, depth_frame
 
-
     def get_depth_shape(self):
         """ Retruns width and height of the depth stream for one arbitrary device
 
@@ -215,7 +211,6 @@ class DeviceManager:
                     height = stream.as_video_stream_profile().height()
         return width, height
 
-
     def disable_streams(self):
         self._config.disable_all_streams()
 
@@ -230,7 +225,6 @@ class DeviceManager:
 
 
 def get_config_for_camera():
-
     config = rs.config()
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
@@ -239,7 +233,6 @@ def get_config_for_camera():
 
 
 def get_frames_from_all_cameras(device_manager, number_of_devices):
-
     frames = []
 
     for i in range(number_of_devices):
@@ -260,11 +253,6 @@ def main():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--aws_access_key", required=True, help="the access key for aws")
-    parser.add_argument("--aws_secret_access_key", required=True, help="the secret access key for aws")
-    parser.add_argument("--region", required=True, help="the region for aws connection")
-    parser.add_argument("--data_stream_name", required=True, help="the kinesis stream name for posting data")
-    parser.add_argument("--images_stream_name", required=True, help="the kinesis stream name for posting images")
     parser.add_argument("--debug", action="store_true", help="debug level")
     parser.add_argument("--deep_debug", action="store_true", help="deeper debug level")
 
@@ -388,7 +376,8 @@ def main():
                     # getting the distance from camera for each axe
                     x_distances_camera_object = get_axe_distance_to_object(distance_to_object, x_angle)
                     y_distances_camera_object = get_axe_distance_to_object(distance_to_object, y_angle)
-                    
+                    #print("\nx_distances_camera_object: {}".format(x_distances_camera_object))
+                    #print("y_distances_camera_object: {}\n".format(y_distances_camera_object))
                     # getting the distance from camera to object
                     camera_object_distances = []
                     index_for_diss = 0
@@ -397,6 +386,8 @@ def main():
                         camera_object_distances.append(camera_object_distance)
                         index_for_diss += 1
 
+                    print(left_right)
+                    print(up_down)
                     # check if the distance and direction fit any of the model object
                     found_object = fit_model_object(mmo_data, camera_object_distances, left_right, up_down)
 
@@ -404,54 +395,59 @@ def main():
                         # means we found an object that the observer was looking at
                         index += 1
 
-                        # saving the picture with the timestamp + object id
-                        if index % NUMBER_OF_FRAMES_TO_SAVE_PICTURE == 0:
-                            save_frame_as_picture(frame, found_object)
-
                         # this function call will do one of 2 options:
                         # will update end timestamp if product detected -> will assign new datetime.now() -> extending time
                         # will init new timestamp for x,y with start_timestamp -> will reset if there is no faces detected
                         # until the next time some faces detected
                         product_list = insert_found_product(found_object, product_list)
 
-                        if DEEP_DEBUG:
-                            print("found object with id: {}".format(found_object))
+                        #if DEEP_DEBUG:
+                        print("found object with id: {}".format(found_object))
 
                     else:
-                        if DEEP_DEBUG:
-                            print("no object found with distance from camera: {}".format(camera_object_distances))
+                        #if DEEP_DEBUG:
+                        print("no object found with distance from camera: {}".format(camera_object_distances))
+
+            light_value = 0
+            light_duration = ""
+            dark_value = 0
+            dark_duration = ""
+            for p1 in product_list:
+                if p1['product_id'] == "light":
+                    light_value = p1['value']
+                    light_duration = p1['duration_so_far']
+                else:
+                    dark_value = p1['value']
+                    dark_duration = p1['duration_so_far']
+
+            cv2.putText(color_frame, "LIGHT", (400, 300), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType=cv2.LINE_AA)
+            cv2.putText(color_frame, "value: {}".format(light_value), (400, 320),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType=cv2.LINE_AA)
+            cv2.putText(color_frame, "duration: {}".format(light_duration), (400, 340),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType=cv2.LINE_AA)
+
+            cv2.putText(color_frame, "DARK", (80, 300), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType=cv2.LINE_AA)
+            cv2.putText(color_frame, "value: {}".format(dark_value), (80, 320),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType=cv2.LINE_AA)
+            cv2.putText(color_frame, "duration: {}".format(dark_duration), (80, 340),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType=cv2.LINE_AA)
 
             cv2.imshow("WAPY", color_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 device_manager.disable_streams()
                 break
 
-        index += 1
+            # sum_up_values = int(light_value + dark_value) if int(light_value + dark_value) > 0 else 1
+            # if sum_up_values % 100 == 0:
+            #     timestamp = create_time_stamp()
+            #     with open("./data_from_work/data_" + timestamp + ".json", "w") as json_file:
+            #         json.dump(str(product_list), json_file)
+            #     print("\nproduct list saved into json file with timestamp: {}\n".format(timestamp))
 
-        if index % NUMBER_OF_PRODUCTS_TO_POST == 0:
-            print("starting posting points and images to kinesis at: {}".format(datetime.datetime.now()))
-
-            # passing the array to the kinesis handler for posting
-            import kinesis_handler
-            kinesis_handler.start_posting(args.aws_access_key,              # aws access key
-                                          args.aws_secret_access_key,       # secret access key
-                                          args.region,                      # region
-                                          args.data_stream_name,            # points stream name
-                                          args.images_stream_name,          # images stream name
-                                          json.dumps(product_list),            # array of points
-                                          path_for_pictures)                # path to the pictures
-
-            # init the array for the new posts
-            product_list = []
-            print("\nend posting data and images at: {}".format(datetime.datetime.now()))
-
-            print("\nstart cleaning images folder...")
-            clear_images_folder()
-            print("images folder is empty now...")
-#--aws_access_key "" --aws_secret_access_key --region --data_stream_name --images_stream_name --data --images
-
-
-
+            if index % NUMBER_OF_PRODUCTS_TO_POST == 0:
+                print("################################")
+                for p in product_list:
+                    print("{} : value={} , duration={}".format(p['product_id'], p['value'], p['duration_so_far']))
 ##########################################################################################################
 #                                                                                                        #
 #                                                                                                        #
@@ -498,8 +494,9 @@ def get_head_pose(shape):
     return reprojectdst, euler_angle
 
 
-def create_time_stamp():
+## -------------------------------------- pictures proccessing helpers ------------------------------------ ##
 
+def create_time_stamp():
     raw_timestamp = datetime.datetime.now()
 
     # example: raw_timestamp -> 2019-03-12 08:14:47.501562
@@ -508,12 +505,11 @@ def create_time_stamp():
     return timestamp
 
 
-def save_frame_as_picture(frame, object_id):
-
+def save_frame_as_picture(frame, product):
     timestamp = create_time_stamp()
 
     # adding the timestamp and the x,y position we are attaching to the frame
-    cv2.imwrite(path_for_pictures + timestamp + "_" + str(object_id) + ".jpg", frame)
+    cv2.imwrite(path_for_pictures + timestamp + "_" + str(product) + ".jpg", frame)
 
     if DEBUG:
         print("saved photo with timestamp: {}.jpg".format(timestamp))
@@ -593,6 +589,8 @@ def calc_normlized_dis(dis,angle):
 
 
 def normal_distances(diss, x_angle, y_angle):
+    print(x_angle)
+    print(y_angle)
     first_normalization = []
     for dis in diss:
         d = calc_normlized_dis(dis, y_angle)
@@ -607,7 +605,6 @@ def normal_distances(diss, x_angle, y_angle):
     # normalized_distances = get_axe_distance_to_object(y_start_distance, x_angle)
 
     return final_normlization
-
 
 def calculate_values(value):
     global TIME_DIFFERENCE_BEWTEEN_DETECTING
@@ -845,8 +842,8 @@ def get_camera_object_distance_mmo(mmo_data, left_right, up_down):
             "up_down": temp_up_down  # string "UP" or "DOWN"
         }
 
-        if DEEP_DEBUG:
-            print("new mmo data: {}".format(new_mmo_data))
+        #if DEEP_DEBUG:
+        print("new mmo data: {}".format(new_mmo_data))
 
         objects.append(new_mmo_data)
 
