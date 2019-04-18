@@ -11,6 +11,8 @@ import os
 import subprocess
 import pyrealsense2 as rs
 import re
+import kinesis_handler
+import time
 
 DEBUG = False
 DEEP_DEBUG = False
@@ -24,9 +26,11 @@ Y_ANGLE = LEFT_RIGHT_ANGLE / 2
 
 # post processing constants
 DISTANCE = 1
-NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 10
-NUMBER_OF_PRODUCTS_TO_POST = 100
+FRAME_INTERVAL = 150
+VIEWER_INTERVAL = 1
 TIME_DIFFERENCE_BEWTEEN_DETECTING = 4
+CAMERA_ID = ""
+STORE_ID = ""
 
 ATTRIBUTE_NAME = "duration_so_far"
 
@@ -254,6 +258,8 @@ def main():
     global DISTANCE
     global DEBUG
     global DEEP_DEBUG
+    global CAMERA_ID
+    global STORE_ID
 
     # return
     import argparse
@@ -269,6 +275,12 @@ def main():
     parser.add_argument("--deep_debug", action="store_true", help="deeper debug level")
 
     args = parser.parse_args()
+
+    if os.environ['CAMERA_ID'] is not None:
+        CAMERA_ID = os.environ['CAMERA_ID']
+
+    if os.environ['STORE_ID'] is not None:
+        STORE_ID = os.environ['STORE_ID']
 
     # the config for the cameras
     config = get_config_for_camera()
@@ -404,18 +416,28 @@ def main():
                         # means we found an object that the observer was looking at
                         index += 1
 
+                        frame_timestamp = int(time.time() * 1000)
+                        object_to_post = {
+                            "store_id": STORE_ID,
+                            "camera_id": CAMERA_ID,
+                            "object_id": found_object,
+                            "timestamp": frame_timestamp
+                        }
+
                         # saving the picture with the timestamp + object id
-                        if index % NUMBER_OF_FRAMES_TO_SAVE_PICTURE == 0:
-                            save_frame_as_picture(frame, found_object)
+                        if index % FRAME_INTERVAL == 0:
+                            # TODO: post image to s3
 
-                        # this function call will do one of 2 options:
-                        # will update end timestamp if product detected -> will assign new datetime.now() -> extending time
-                        # will init new timestamp for x,y with start_timestamp -> will reset if there is no faces detected
-                        # until the next time some faces detected
-                        product_list = insert_found_product(found_object, product_list)
+                            save_frame_as_picture(color_frame, found_object, frame_timestamp)
+                            clear_images_folder()
 
-                        if DEEP_DEBUG:
-                            print("found object with id: {}".format(found_object))
+                        # TODO: send only: found_object, store_id, camera_id, timestamp
+                        kinesis_handler.start_posting(args.aws_access_key,          # aws access key
+                                                      args.aws_secret_access_key,   # secret access key
+                                                      args.region,                  # region
+                                                      args.data_stream_name,        # points stream name
+                                                      json.dumps(object_to_post),   # object
+                                                      path_for_pictures)            # path to the pictures
 
                     else:
                         if DEEP_DEBUG:
@@ -428,27 +450,6 @@ def main():
 
         index += 1
 
-        if index % NUMBER_OF_PRODUCTS_TO_POST == 0:
-            print("starting posting points and images to kinesis at: {}".format(datetime.datetime.now()))
-
-            # passing the array to the kinesis handler for posting
-            import kinesis_handler
-            kinesis_handler.start_posting(args.aws_access_key,              # aws access key
-                                          args.aws_secret_access_key,       # secret access key
-                                          args.region,                      # region
-                                          args.data_stream_name,            # points stream name
-                                          args.images_stream_name,          # images stream name
-                                          json.dumps(product_list),            # array of points
-                                          path_for_pictures)                # path to the pictures
-
-            # init the array for the new posts
-            product_list = []
-            print("\nend posting data and images at: {}".format(datetime.datetime.now()))
-
-            print("\nstart cleaning images folder...")
-            clear_images_folder()
-            print("images folder is empty now...")
-#--aws_access_key "" --aws_secret_access_key --region --data_stream_name --images_stream_name --data --images
 
 
 
@@ -508,15 +509,14 @@ def create_time_stamp():
     return timestamp
 
 
-def save_frame_as_picture(frame, object_id):
-
-    timestamp = create_time_stamp()
+def save_frame_as_picture(frame, object_id, frame_timestamp):
 
     # adding the timestamp and the x,y position we are attaching to the frame
-    cv2.imwrite(path_for_pictures + timestamp + "_" + str(object_id) + ".jpg", frame)
+    image_name = "{}{}_{}_{}_{}.jpg".format(path_for_pictures, str(frame_timestamp), str(object_id), CAMERA_ID, STORE_ID)
+    cv2.imwrite(image_name, frame)
 
     if DEBUG:
-        print("saved photo with timestamp: {}.jpg".format(timestamp))
+        print("saved photo with name: {}.jpg".format(image_name))
 
 
 def clear_images_folder():
@@ -530,58 +530,6 @@ def clear_images_folder():
 
 
 ## -------------------------------------- handlers for analysis and values ------------------------------------ ##
-
-
-def insert_found_product(product_id, product_list):
-
-    '''
-        product_list = [
-            {
-                "product_id": "",
-                "value": "",
-                "start_timestamp": "",
-                "end_timestamp": "",
-                "duration_so_far": "",
-                "timers": []
-            }
-        ]
-    '''
-
-    # indicator if we have already entered the point
-    entered = False
-
-    # checking if the current product is already in the list
-    # if so -> we will calculate the values for it: 'value', 'duration_so_far', timestamps...
-    for product in product_list:
-
-        if product['product_id'] == product_id:
-
-            # save and remove the product from the list
-            temp_product = product
-            product_list.remove(product)
-
-            # change the indicator that we found the object in the list
-            entered = True
-
-            # if we found the object in hand -> calculate the values and return the updated product
-            updated_product = calculate_values(temp_product)
-            product_list.append(updated_product)
-
-            break
-
-    # means this is a new product in the list -> append with init values
-    if not entered:
-
-        product_list.append({
-            "product_id": product_id,
-            "value": 1,
-            "start_timestamp": datetime.datetime.now(),
-            "end_timestamp": None,
-            "duration_so_far": 0.0,
-            "timers": []
-        })
-
-    return product_list
 
 
 def calc_normlized_dis(dis,angle):
@@ -607,56 +555,6 @@ def normal_distances(diss, x_angle, y_angle):
     # normalized_distances = get_axe_distance_to_object(y_start_distance, x_angle)
 
     return final_normlization
-
-
-def calculate_values(value):
-    global TIME_DIFFERENCE_BEWTEEN_DETECTING
-
-    temp_value = value
-    current_timestamp = datetime.datetime.now()
-
-    if temp_value['end_timestamp'] is not None:
-        if temp_value['end_timestamp'] + timedelta(seconds=TIME_DIFFERENCE_BEWTEEN_DETECTING) < current_timestamp:
-
-            # end timestamp is not none but the session of looking is over -> need to calulate and start new session
-            timer = {
-                "start_timestamp": temp_value['start_timestamp'],
-                "end_timestamp": temp_value['end_timestamp']
-            }
-
-            # calculate the time diff and convert into seconds to add to the duration_so_far
-            delta = temp_value['end_timestamp'] - temp_value['start_timestamp']
-            seconds_spent_on_product = delta.total_seconds()
-
-            temp_value['value'] += 1
-
-            # assign the values into object
-            temp_value['duration_so_far'] += seconds_spent_on_product
-            temp_value['timers'].append(timer)
-
-            # starting new session -> need to put the current timestamp as start and None as end for init
-            temp_value['start_timestamp'] = current_timestamp
-            temp_value['end_timestamp'] = None
-
-        else:
-            # we are still in range of this session -> will put the current timestamp as end to
-            # extend the time spent on this object
-            temp_value['end_timestamp'] = current_timestamp
-
-    elif temp_value['start_timestamp'] + timedelta(seconds=TIME_DIFFERENCE_BEWTEEN_DETECTING) < current_timestamp:
-        # means we need to start new timer for this object
-        # end_timestamp here is none
-        temp_value['start_timestamp'] = current_timestamp
-
-        temp_value['value'] += 1
-
-    else:
-
-        # means we need to update the end_timestamp to the current_timestamp to
-        # extend the duration for the product when we calculate the values for json
-        temp_value['end_timestamp'] = current_timestamp
-
-    return temp_value
 
 
 def get_axe_distance_to_object(distances_to_object, angle):
@@ -802,6 +700,8 @@ def fit_model_object(mmo_data, camera_object_distance, left_right, up_down):
 
             # checking for range
             if obj['object_left_point_distance'] <= camera_distance <= obj['object_right_point_distance'] or obj['object_right_point_distance'] <= camera_distance <= obj['object_left_point_distance'] or obj['object_down_point_distance'] <= camera_distance <= obj['object_up_point_distance'] or obj['object_up_point_distance'] <= camera_distance <= obj['object_down_point_distance']:
+
+                # if we got here we
                 object_id = obj['object_id']
                 break
 

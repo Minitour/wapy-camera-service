@@ -13,29 +13,31 @@ READ_TIMEOUT = 60
 KINESIS_SUCCESS_RESPONSE = 200
 
 
-def start_posting(aws_access_key_id, aws_secret_access_key, region, data_stream_name, images_stream_name, data, images, debug=False):
+def start_posting(aws_access_key_id, aws_secret_access_key, region, data_stream_name, data, images, debug=False):
 
     # data - dumped with json
     # images - path to pictures
 
     # initiate the kinesis stream connection
-    client = init_kinesis_client(aws_access_key_id, aws_secret_access_key, region)
+    kinesis_client = init_service_client("kinesis", aws_access_key_id, aws_secret_access_key, region)
+    s3_client = init_service_client("s3", aws_access_key_id, aws_secret_access_key, region)
 
     # send the data to kinesis
-    post_data_to_kinesis(client, data_stream_name, data, debug)
+    post_data_to_kinesis(kinesis_client, data_stream_name, data, debug)
 
-    # send the images path to post to kinesis
-    post_images_to_kinesis(client, images_stream_name, images, debug)
+    if images:
+        # send the images path to post to kinesis
+        post_images_to_s3(s3_client, images, debug)
 
 
-def init_kinesis_client(aws_access_key_id, aws_secret_access_key, region):
+def init_service_client(service, aws_access_key_id, aws_secret_access_key, region):
 
     config = botocore.config.Config()
     config.region_name = region
     config.connection_timeout = CONNECTION_TIMEOUT
     config.read_timeout = READ_TIMEOUT
 
-    kinesis_client = boto3.client('kinesis', config=config, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+    kinesis_client = boto3.client(service, config=config, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
 
     return kinesis_client
 
@@ -54,7 +56,9 @@ def post_data_to_kinesis(client, data_stream_name, data, debug):
     print("posted all " + str(index) + " data points\n")
 
 
-def post_images_to_kinesis(client, images_stream_name, images_path, debug):
+def post_images_to_s3(client, images_path, debug):
+
+    bucketName = "wapyvalues"
 
     general_error = None
     images = []
@@ -70,15 +74,11 @@ def post_images_to_kinesis(client, images_stream_name, images_path, debug):
     for image in images:
 
         try:
-            with open(images_path + "/" + image, "rb") as image_file:
+            Key = images_path + "/" + image
+            outPutname = "stored_pics/{}".format(image)
 
-                # encode the image
-                encoded_image = b64encode(image_file.read())
-
-                # post the encoded image to kinesis
-                post_to_kinesis(client, images_stream_name, encoded_image, debug)
-
-                counter_for_posting += 1
+            client.upload_file(Key, bucketName, outPutname)
+            counter_for_posting += 1
 
         except Exception as error:
             general_error = error
