@@ -1,19 +1,13 @@
 import boto3
 import botocore.config
-from base64 import b64encode
 import json
 import os
 import random
 import string
-
-NUMBER_OF_PARTITION_KEY_LETTERS = 16
-CONNECTION_TIMEOUT = 60
-READ_TIMEOUT = 60
-
-KINESIS_SUCCESS_RESPONSE = 200
+import config
 
 
-def start_posting(aws_access_key_id, aws_secret_access_key, region, data_stream_name, data, images, debug=False):
+def start_posting(aws_access_key_id, aws_secret_access_key, region, data_stream_name, data, images, debug=True):
 
     # data - dumped with json
     # images - path to pictures
@@ -34,8 +28,8 @@ def init_service_client(service, aws_access_key_id, aws_secret_access_key, regio
 
     config = botocore.config.Config()
     config.region_name = region
-    config.connection_timeout = CONNECTION_TIMEOUT
-    config.read_timeout = READ_TIMEOUT
+    config.connection_timeout = config.CONNECTION_TIMEOUT
+    config.read_timeout = config.READ_TIMEOUT
 
     kinesis_client = boto3.client(service, config=config, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
 
@@ -58,8 +52,6 @@ def post_data_to_kinesis(client, data_stream_name, data, debug):
 
 def post_images_to_s3(client, images_path, debug):
 
-    bucketName = "wapyvalues"
-
     general_error = None
     images = []
     counter_for_posting = 0
@@ -77,7 +69,7 @@ def post_images_to_s3(client, images_path, debug):
             Key = images_path + "/" + image
             outPutname = "stored_pics/{}".format(image)
 
-            client.upload_file(Key, bucketName, outPutname)
+            client.upload_file(Key, config.bucketName, outPutname)
             counter_for_posting += 1
 
         except Exception as error:
@@ -96,7 +88,7 @@ def post_to_kinesis(client, stream_name, record, debug):
     response = client.put_record(StreamName=stream_name, Data=record, PartitionKey=get_partition_key())
 
     if debug:
-        if int(response.get('ResponseMetadata').get('HTTPStatusCode')) == KINESIS_SUCCESS_RESPONSE:
+        if int(response.get('ResponseMetadata').get('HTTPStatusCode')) == config.KINESIS_SUCCESS_RESPONSE:
             print(str(record) + " --> has been posted to kinesis")
         else:
             print(response)
@@ -105,4 +97,4 @@ def post_to_kinesis(client, stream_name, record, debug):
 def get_partition_key():
 
     letters = string.ascii_lowercase
-    return ''.join(random.choice(letters) for i in range(NUMBER_OF_PARTITION_KEY_LETTERS))
+    return ''.join(random.choice(letters) for i in range(config.NUMBER_OF_PARTITION_KEY_LETTERS))
