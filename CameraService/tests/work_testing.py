@@ -190,6 +190,7 @@ class DeviceManager:
         # extract the color and depth frames from the camera
         depth_frame = frames.get_depth_frame()
         color_frame = np.asanyarray(frames.get_color_frame().get_data())
+        color_frame = color_frame.flip(color_frame, 0)
 
         return color_frame, depth_frame
 
