@@ -3,248 +3,29 @@ import dlib
 import numpy as np
 from imutils import face_utils
 import json
-import math
+import requests
+from requests.exceptions import RequestException
 import datetime
+from datetime import timedelta
 import os
 import subprocess
-import pyrealsense2 as rs
 import re
-
-DEBUG = False
-DEEP_DEBUG = False
-
-# camera constants
-POSSIBLE_CAMERAS = 1
-UP_DOWN_ANGLE = 60
-LEFT_RIGHT_ANGLE = 60
-X_ANGLE = UP_DOWN_ANGLE / 2
-Y_ANGLE = LEFT_RIGHT_ANGLE / 2
-
-# post processing constants
-DISTANCE = 1
-NUMBER_OF_FRAMES_TO_SAVE_PICTURE = 1000000000000000
-NUMBER_OF_X_Y_TO_POST = 1000000000000
-ALLOWED_X_Y_DISTANCE = 10
-
-path_for_pictures = "./pictures_for_analysis/"
-face_landmark_path = './shape_predictor_68_face_landmarks.dat'
-
-##########################################################################################################
-#                                                                                                        #
-#                                                                                                        #
-#                              CONSTANTS FOR POST PROCESSING FUNCTIONS                                   #
-#                                                                                                        #
-#                                                                                                        #
-##########################################################################################################
+import kinesis_handler
+import time
+import config
+import device_manager_class
+import helper_functions
+import mmo_handler
 
 
-K = [6.5308391993466671e+002, 0.0, 3.1950000000000000e+002,
-     0.0, 6.5308391993466671e+002, 2.3950000000000000e+002,
-     0.0, 0.0, 1.0]
-D = [7.0834633684407095e-002, 6.9140193737175351e-002, 0.0, 0.0, -1.3073460323689292e+000]
-
-cam_matrix = np.array(K).reshape(3, 3).astype(np.float32)
-dist_coeffs = np.array(D).reshape(5, 1).astype(np.float32)
-
-object_pts = np.float32([[6.825897, 6.760612, 4.402142],
-                         [1.330353, 7.122144, 6.903745],
-                         [-1.330353, 7.122144, 6.903745],
-                         [-6.825897, 6.760612, 4.402142],
-                         [5.311432, 5.485328, 3.987654],
-                         [1.789930, 5.393625, 4.413414],
-                         [-1.789930, 5.393625, 4.413414],
-                         [-5.311432, 5.485328, 3.987654],
-                         [2.005628, 1.409845, 6.165652],
-                         [-2.005628, 1.409845, 6.165652],
-                         [2.774015, -2.080775, 5.048531],
-                         [-2.774015, -2.080775, 5.048531],
-                         [0.000000, -3.116408, 6.097667],
-                         [0.000000, -7.415691, 4.070434]])
-
-reprojectsrc = np.float32([[10.0, 10.0, 10.0],
-                           [10.0, 10.0, -10.0],
-                           [10.0, -10.0, -10.0],
-                           [10.0, -10.0, 10.0],
-                           [-10.0, 10.0, 10.0],
-                           [-10.0, 10.0, -10.0],
-                           [-10.0, -10.0, -10.0],
-                           [-10.0, -10.0, 10.0]])
-
-line_pairs = [[0, 1], [1, 2], [2, 3], [3, 0],
-              [4, 5], [5, 6], [6, 7], [7, 4],
-              [0, 4], [1, 5], [2, 6], [3, 7]]
-
-
-
-##########################################################################################################
-#                                                                                                        #
-#                                                                                                        #
-#                                           DEVICES MANAGER                                              #
-#                                                                                                        #
-#                                                                                                        #
-##########################################################################################################
-
-
-class Device:
-    def __init__(self, pipeline, pipeline_profile):
-        self.pipeline = pipeline
-        self.pipeline_profile = pipeline_profile
-
-
-def enumerate_connected_devices(context):
-    """
-    Enumerate the connected Intel RealSense devices
-
-    Parameters:
-    -----------
-    context 	 	  : rs.context()
-                         The context created for using the realsense library
-
-    Return:
-    -----------
-    connect_device : array
-                       Array of enumerated devices which are connected to the PC
-
-    """
-    connect_device = []
-    for d in context.devices:
-        if d.get_info(rs.camera_info.name).lower() != 'platform camera' and not re.search("(?<=d430).*", d.get_info(rs.camera_info.name).lower()):
-            connect_device.append(d.get_info(rs.camera_info.serial_number))
-    return connect_device
-
-
-class DeviceManager:
-    def __init__(self, context, pipeline_configuration):
-        """
-        Class to manage the Intel RealSense devices
-
-        Parameters:
-        -----------
-        context 	: rs.context()
-                                     The context created for using the realsense library
-        pipeline_configuration 	: rs.config()
-                                   The realsense library configuration to be used for the application
-
-        """
-        assert isinstance(context, type(rs.context()))
-        assert isinstance(pipeline_configuration, type(rs.config()))
-        self._context = context
-        self._available_devices = enumerate_connected_devices(context)
-        self._enabled_devices = {}
-        self._config = pipeline_configuration
-        self._frame_counter = 0
-        self._profile_pipe = ""
-
-
-    def enable_device(self, device_serial):
-        """
-        Enable an Intel RealSense Device
-
-        Parameters:
-        -----------
-        device_serial 	 : string
-                             Serial number of the realsense device
-        enable_ir_emitter : bool
-                            Enable/Disable the IR-Emitter of the device
-
-        """
-        pipeline = rs.pipeline()
-
-        # Enable the device
-        self._config.enable_device(device_serial)
-        pipeline_profile = pipeline.start(self._config)
-
-        self._profile_pipe = pipeline_profile
-        self._enabled_devices[device_serial] = (Device(pipeline, pipeline_profile))
-
-
-    def enable_all_devices(self, enable_ir_emitter=False):
-        """
-        Enable all the Intel RealSense Devices which are connected to the PC
-
-        """
-        print("{} devices have been found".format(len(self._available_devices)))
-
-        for serial in self._available_devices:
-            self.enable_device(serial)
-
-
-    def poll_frames(self, device_serial):
-        """
-        Poll for frames from the enabled Intel RealSense devices.
-        If temporal post processing is enabled, the depth stream is averaged over a certain amount of frames
-
-        Parameters:
-        -----------
-
-        """
-        # getting the frames from the camera
-        frames = self._enabled_devices[device_serial].pipeline.wait_for_frames()
-
-        # extract the color and depth frames from the camera
-        depth_frame = frames.get_depth_frame()
-        color_frame = np.asanyarray(frames.get_color_frame().get_data())
-
-        return color_frame, depth_frame
-
-
-    def get_depth_shape(self):
-        """ Retruns width and height of the depth stream for one arbitrary device
-
-        Returns:
-        -----------
-
-        width: int
-        height: int
-        """
-        width = -1
-        height = -1
-        for (serial, device) in self._enabled_devices.items():
-            for stream in device.pipeline_profile.get_streams():
-                if (rs.stream.depth == stream.stream_type()):
-                    width = stream.as_video_stream_profile().width()
-                    height = stream.as_video_stream_profile().height()
-        return width, height
-
-
-    def disable_streams(self):
-        self._config.disable_all_streams()
-
-    def get_serial_number(self, index):
-        return self._available_devices[index]
-
-    def get_available_camera(self):
-        return len(self._available_devices)
-
-    def get_pipeline(self):
-        return self._profile_pipe
-
-
-def get_config_for_camera():
-
-    config = rs.config()
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-
-    return config
-
-
-def get_frames_from_all_cameras(device_manager, number_of_devices):
-
-    frames = []
-
-    for i in range(number_of_devices):
-        serial = device_manager.get_serial_number(i)
-        color_frame, depth_frame = device_manager.poll_frames(serial)
-        frames.append({"device": str(serial), "color_frame": color_frame, "depth_frame": depth_frame})
-
-    return frames
+# constants
+CAMERA_ID = ""
+STORE_ID = ""
 
 
 def main():
-    global DISTANCE
-    global DEBUG
-    global DEEP_DEBUG
+    global CAMERA_ID
+    global STORE_ID
 
     # return
     import argparse
@@ -261,11 +42,17 @@ def main():
 
     args = parser.parse_args()
 
+    if os.environ['CAMERA_ID'] is not None:
+        CAMERA_ID = os.environ['CAMERA_ID']
+
+    if os.environ['STORE_ID'] is not None:
+        STORE_ID = os.environ['STORE_ID']
+
     # the config for the cameras
-    config = get_config_for_camera()
+    config_pipeline = device_manager_class.get_config_for_camera()
 
     # init a device manager for camera/s
-    device_manager = DeviceManager(rs.context(), config)
+    device_manager = device_manager_class.DeviceManager(config_pipeline)
 
     # enable all devices we found
     device_manager.enable_all_devices()
@@ -277,27 +64,20 @@ def main():
     detector = dlib.get_frontal_face_detector()
 
     # init the predictor
-    predictor = dlib.shape_predictor(face_landmark_path)
+    predictor = dlib.shape_predictor(config.face_landmark_path)
 
     # index when we will take the frame and get the emotions from the picture
     index = 1
 
-    x_y_array = []
+    # getting from the mmo the info we need for the window
+    mmo_data_exists, mmo_data = mmo_handler.get_json_model_from_mmo("", "")
 
-    # set debug if stated
-    DEBUG = args.debug if args.debug is not None else DEBUG
-    print("debug mode: {}".format(DEBUG))
-
-    DEEP_DEBUG = args.deep_debug if args.deep_debug is not None else DEEP_DEBUG
-    print("deep debug mode, will print in console: {}".format(DEEP_DEBUG))
 
     while True:
 
         # getting all frames from cameras
-        frames_per_camera = get_frames_from_all_cameras(device_manager, number_of_devices)
+        frames_per_camera = device_manager_class.get_frames_from_all_cameras(device_manager, number_of_devices)
 
-        width = 640
-        height = 480
         ret = True if len(frames_per_camera) > 0 else False
 
         # we are still getting video from the camera
@@ -316,7 +96,7 @@ def main():
                     shape = face_utils.shape_to_np(shape)
 
                     # estimate the head pose of the specific face
-                    reprojectdst, euler_angle = get_head_pose(shape)
+                    reprojectdst, euler_angle = helper_functions.get_head_pose(shape)
 
                     # init vars for measuring distance to object
                     dis_start = 0
@@ -328,14 +108,15 @@ def main():
                     middle_x, middle_y = shape[int(len(shape) / 2)][0], shape[int(len(shape) / 2)][1]
                     end_x, end_y = shape[-1][0], shape[-1][1]
 
+                    if config.DEEP_DEBUG:
+                        print("start x, y: {} , {}".format(start_x, start_y))
+                        print("middle x, y: {} , {}".format(middle_x, middle_y))
+                        print("end x, y: {} , {}".format(end_x, end_y))
+
                     # draw points for the face
                     for (x, y) in shape:
 
-                        if DEEP_DEBUG:
-                            print("start x, y: {} , {}".format(start_x, start_y))
-                            print("middle x, y: {} , {}".format(middle_x, middle_y))
-                            print("end x, y: {} , {}".format(end_x, end_y))
-
+                        if config.DEEP_DEBUG:
                             cv2.circle(color_frame, (x, y), 1, (0, 0, 255), -1)
 
                     # getting the distance to the first x,y
@@ -350,31 +131,73 @@ def main():
                     if end_x is not None and end_y is not None:
                         dis_end = depth_frame.get_distance(end_x, end_y)
 
+                    # getting the x, y angles from the euler angles
+                    x_angle = euler_angle[1, 0]
+                    y_angle = euler_angle[0, 0]
+
                     # getting the max distance -> avoiding 0
-                    dis = max(dis_start, dis_middle, dis_end)
+                    diss = [dis_start, dis_middle, dis_end]
+                    #diss = [dis_end]
+
+                    diss = helper_functions.normal_distances(diss, x_angle, y_angle)
 
                     # return value of too far objects is 0
                     # if no object detected because he is too far -> will put 1 as distance
-                    distance_to_object = dis if dis != 0 else DISTANCE
+                    distance_to_object = diss if diss is not None else config.DISTANCE
 
-                    if DEEP_DEBUG:
+                    if config.DEEP_DEBUG:
                         print("distance to object: {}".format(distance_to_object))
 
-                    # calculate where the observer is looking
-                    x = width/2 - int((euler_angle[1, 0]/X_ANGLE)*(width/2)*distance_to_object)
-                    y = height/2 + int((euler_angle[0, 0]/Y_ANGLE)*(height/2)*distance_to_object)
+                    # determine if the person wa looking to the left or right, up or down
+                    left_right = "RIGHT" if x_angle >= 0 else "LEFT"
+                    up_down = "UP" if y_angle <= 0 else "DOWN"
 
-                    # after 1000 frames we are saving one photo
-                    if index % NUMBER_OF_FRAMES_TO_SAVE_PICTURE == 0:
-                        save_frame_as_picture(color_frame, x, y)
+                    # getting the distance from camera for each axe
+                    x_distances_camera_object = helper_functions.get_axe_distance_to_object(distance_to_object, x_angle)
+                    y_distances_camera_object = helper_functions.get_axe_distance_to_object(distance_to_object, y_angle)
+                    
+                    # getting the distance from camera to object
+                    camera_object_distances = []
+                    index_for_diss = 0
+                    for x_dis in x_distances_camera_object:
+                        camera_object_distance = helper_functions.calculate_distance(x_dis, y_distances_camera_object[index_for_diss])
+                        camera_object_distances.append(camera_object_distance)
+                        index_for_diss += 1
 
-                    cv2.circle(color_frame, (int(x), int(y)), 3, (10, 20, 20), 2)
+                    # check if the distance and direction fit any of the model object
+                    found_object = mmo_handler.fit_model_object(mmo_data, camera_object_distances, left_right, up_down)
 
-                    if DEEP_DEBUG:
-                        print("x: {}, y: {}".format(x, y))
+                    if found_object != "":
+                        # means we found an object that the observer was looking at
+                        index += 1
 
-                    # appending the x,y to the list for posting to the messaging queue later
-                    x_y_array = insert_x_y(x,y, x_y_array)
+                        frame_timestamp = int(time.time() * 1000)
+                        object_to_post = {
+                            "store_id": STORE_ID,
+                            "camera_id": CAMERA_ID,
+                            "object_id": found_object,
+                            "timestamp": frame_timestamp
+                        }
+
+                        # saving the picture with the timestamp + object id
+                        if index % config.FRAME_INTERVAL == 0:
+                            helper_functions.save_frame_as_picture(color_frame, found_object, frame_timestamp)
+
+                        # posting the images(optional) and objects data to s3 and kinesis
+                        kinesis_handler.start_posting(args.aws_access_key,          # aws access key
+                                                      args.aws_secret_access_key,   # secret access key
+                                                      args.region,                  # region
+                                                      args.data_stream_name,        # points stream name
+                                                      json.dumps(object_to_post),   # object
+                                                      config.path_for_pictures)     # path to the pictures
+
+                        # clear the image folder after posting -> only if we saved a picture
+                        if index % config.FRAME_INTERVAL == 0:
+                            helper_functions.clear_images_folder()
+
+                    else:
+                        if config.DEEP_DEBUG:
+                            print("no object found with distance from camera: {}".format(camera_object_distances))
 
             cv2.imshow("WAPY", color_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -383,163 +206,6 @@ def main():
 
         index += 1
 
-        if index % NUMBER_OF_X_Y_TO_POST == 0:
-            print("starting posting points and images to kinesis at: {}".format(datetime.datetime.now()))
-
-            # passing the array to the kinesis handler for posting
-            import kinesis_handler
-            kinesis_handler.start_posting(args.aws_access_key,              # aws access key
-                                          args.aws_secret_access_key,       # secret access key
-                                          args.region,                      # region
-                                          args.data_stream_name,            # points stream name
-                                          args.images_stream_name,          # images stream name
-                                          json.dumps(x_y_array),            # array of points
-                                          path_for_pictures)                # path to the pictures
-
-            # init the array for the new posts
-            x_y_array = []
-            print("\nend posting data and images at: {}".format(datetime.datetime.now()))
-
-            print("\nstart cleaning images folder...")
-            clear_images_folder()
-            print("images folder is empty now...")
-#--aws_access_key "" --aws_secret_access_key --region --data_stream_name --images_stream_name --data --images
-
-
-
-##########################################################################################################
-#                                                                                                        #
-#                                                                                                        #
-#                                   POST PROCESSING FUNCTIONS                                            #
-#                                                                                                        #
-#                                                                                                        #
-##########################################################################################################
-
-def get_faces_from_detector(color_depth_frames, detector):
-    faces = []
-
-    for color_frame in color_depth_frames:
-
-        color_frames = color_frame['color_frame']
-        for frame in color_frames:
-            face_rects = detector(frame, 0)
-
-            faces.extend(face_rects)
-
-    return faces
-
-
-def get_head_pose(shape):
-    image_pts = np.float32([shape[17], shape[21], shape[22], shape[26], shape[36],
-                            shape[39], shape[42], shape[45], shape[31], shape[35],
-                            shape[48], shape[54], shape[57], shape[8]])
-
-    _, rotation_vec, translation_vec = cv2.solvePnP(object_pts, image_pts, cam_matrix, dist_coeffs)
-
-    reprojectdst, _ = cv2.projectPoints(reprojectsrc, rotation_vec, translation_vec, cam_matrix,
-                                        dist_coeffs)
-
-    reprojectdst = tuple(map(tuple, reprojectdst.reshape(8, 2)))
-
-    # calc euler angle
-    rotation_mat, _ = cv2.Rodrigues(rotation_vec)
-    pose_mat = cv2.hconcat((rotation_mat, translation_vec))
-    _, _, _, _, _, _, euler_angle = cv2.decomposeProjectionMatrix(pose_mat)
-
-    return reprojectdst, euler_angle
-
-
-def create_time_stamp():
-
-    raw_timestamp = datetime.datetime.now()
-
-    # example: raw_timestamp -> 2019-03-12 08:14:47.501562
-    timestamp = str(raw_timestamp).split(".")[0].replace("-", "").replace(" ", "").replace(":", "")
-
-    return timestamp
-
-
-def save_frame_as_picture(frame, x, y):
-
-    timestamp = create_time_stamp()
-
-    # adding the timestamp and the x,y position we are attaching to the frame
-    cv2.imwrite(path_for_pictures + timestamp + "_" + str(x) + "_" + str(y) + ".jpg", frame)
-
-    if DEBUG:
-        print("saved photo with timestamp: {}.jpg".format(timestamp))
-
-
-def clear_images_folder():
-    for the_file in os.listdir(path_for_pictures):
-        file_path = os.path.join(path_for_pictures, the_file)
-        try:
-            if os.path.isfile(file_path):
-                os.unlink(file_path)
-        except Exception as e:
-            print(e)
-
-
-def insert_x_y(x,y, array_list):
-
-    # indicator if we have already entered the point
-    entered = False
-
-    # checking if the current x,y is already in the json file
-    # if so -> we will add to the number of views for that product
-    for value in array_list:
-        if value['x'] == x and value['y'] == y:
-
-            # got the same x,y as in the json file and will add 1 to the value attribute
-            entered = True
-            value['value'] += 1
-            break
-
-    # if the current x,y is not in the json file -> will check if it's close enough to the product
-    if not entered:
-        array_list = check_close_pixel([x,y,1], array_list)
-
-    # returning the new array list
-    return array_list
-
-
-def check_close_pixel(pxl, array_list):
-
-    # checking if the current x,y is close to another pixel
-    found = False
-    for value in array_list:
-
-        # we are checking if the x is in the allowed range of pixel to another pixel
-        if pxl[0] + ALLOWED_X_Y_DISTANCE <= value['x'] or pxl[0] - ALLOWED_X_Y_DISTANCE >= value['x']:
-
-            # we are checking if the y is in the allowed range of pixel to another pixel
-            if pxl[1] + ALLOWED_X_Y_DISTANCE <= value['y'] or pxl[1] - ALLOWED_X_Y_DISTANCE >= value['y']:
-
-                # add 1 to the pixel in the position we found
-                value['value'] += pxl[2]
-                found = True
-                break
-
-    # if we did not find any pixel close enough then
-    # we will add to the array list the new x,y we got from the main function
-    if not found:
-        array_list.append({"x": pxl[0], "y": pxl[1], "value": pxl[2]})
-
-    return array_list
-
-
-# # function for adjust the list in order of value
-# def finilize_to_send(list_to_order):
-#
-#     return list_to_order.sort(key=get_value)
-#
-#
-# # getting the value of the current object
-# def get_value(object):
-#
-#     if (not object) or (object is None):
-#         return 0
-#     return object['value']
 
 if __name__ == '__main__':
     main()
