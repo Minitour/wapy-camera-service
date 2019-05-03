@@ -6,15 +6,36 @@ import random
 import string
 import config
 
+aws_access_key = ""
+aws_secret_access_key = ""
+region = ""
+data_stream_name = ""
 
-def start_posting(aws_access_key_id, aws_secret_access_key, region, data_stream_name, data, images, debug=True):
+
+def start_posting(data, images, debug=True):
+
+    global aws_access_key
+    global aws_secret_access_key
+    global region
+    global data_stream_name
 
     # data - dumped with json
     # images - path to pictures
+    if os.environ['aws_access_key'] is not None:
+        aws_access_key = os.environ['aws_access_key']
+
+    if os.environ['aws_secret_access_key'] is not None:
+        aws_secret_access_key = os.environ['aws_secret_access_key']
+
+    if os.environ['region'] is not None:
+        region = os.environ['region']
+
+    if os.environ['data_stream_name'] is not None:
+        data_stream_name = os.environ['data_stream_name']
 
     # initiate the kinesis stream connection
-    kinesis_client = init_service_client("kinesis", aws_access_key_id, aws_secret_access_key, region)
-    s3_client = init_service_client("s3", aws_access_key_id, aws_secret_access_key, region)
+    kinesis_client = init_service_client("kinesis", aws_access_key, aws_secret_access_key, region)
+    s3_client = init_service_client("s3", aws_access_key, aws_secret_access_key, region)
 
     # send the data to kinesis
     post_data_to_kinesis(kinesis_client, data_stream_name, data, debug)
@@ -26,12 +47,12 @@ def start_posting(aws_access_key_id, aws_secret_access_key, region, data_stream_
 
 def init_service_client(service, aws_access_key_id, aws_secret_access_key, region):
 
-    config = botocore.config.Config()
-    config.region_name = region
-    config.connection_timeout = config.CONNECTION_TIMEOUT
-    config.read_timeout = config.READ_TIMEOUT
+    config_client = botocore.config.Config()
+    config_client.region_name = region
+    config_client.connection_timeout = config.CONNECTION_TIMEOUT
+    config_client.read_timeout = config.READ_TIMEOUT
 
-    kinesis_client = boto3.client(service, config=config, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+    kinesis_client = boto3.client(service, config=config_client, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
 
     return kinesis_client
 
