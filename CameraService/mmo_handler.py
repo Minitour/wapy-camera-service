@@ -58,29 +58,33 @@ def stab_window_data():
     }
 
 
-# will get with an api call
-def get_json_model_from_mmo(auth, url):
+# this function will get the mmo model from the json file
+# saved on the disk
+def get_json_model_from_mmo(path):
 
-    if url == "":
+    if path == "":
         return stab_window_data()
 
     try:
-        response = requests.get(url, headers=config.headers, auth=auth)
-        code = response.status_code
 
-        if code == config.SUCCESS:
-            body = json.loads(response.text)
+        with open(path) as json_file:
+            data = json.load(json_file)
 
-            return True, body
+            # means something went wrong and the json file is corrupted
+            if data is None or (not data):
+                return False, "no data found"
 
-        else:
+            # means there are no objects that were calibrated with window
+            if data['objects'] is None or (not data['objects']):
+                return False, "no objects were calibrated"
 
-            return False, response.text
+            return data['objects']
 
-    except RequestException as error:
+    except IOError as error:
         if config.DEEP_DEBUG:
             print("error message: {}".format(error))
         return False, error.__str__()
+
 
 
 def fit_model_object(mmo_data, camera_object_distance, left_right, up_down):
