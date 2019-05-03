@@ -1,15 +1,8 @@
 import cv2
 import dlib
-import numpy as np
 from imutils import face_utils
 import json
-import requests
-from requests.exceptions import RequestException
-import datetime
-from datetime import timedelta
 import os
-import subprocess
-import re
 import kinesis_handler
 import time
 import config
@@ -18,29 +11,13 @@ import helper_functions
 import mmo_handler
 
 
-# constants
-CAMERA_ID = ""
-STORE_ID = ""
-
-
 def main():
-    global CAMERA_ID
-    global STORE_ID
+    CAMERA_ID = ""
+    STORE_ID = ""
+    MMO_PATH = ""
 
-    # return
-    import argparse
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--aws_access_key", required=True, help="the access key for aws")
-    parser.add_argument("--aws_secret_access_key", required=True, help="the secret access key for aws")
-    parser.add_argument("--region", required=True, help="the region for aws connection")
-    parser.add_argument("--data_stream_name", required=True, help="the kinesis stream name for posting data")
-    parser.add_argument("--images_stream_name", required=True, help="the kinesis stream name for posting images")
-    parser.add_argument("--debug", action="store_true", help="debug level")
-    parser.add_argument("--deep_debug", action="store_true", help="deeper debug level")
-
-    args = parser.parse_args()
+    if os.environ['MMO_PATH'] is not None:
+        MMO_PATH = os.environ['MMO_PATH']
 
     if os.environ['CAMERA_ID'] is not None:
         CAMERA_ID = os.environ['CAMERA_ID']
@@ -70,8 +47,7 @@ def main():
     index = 1
 
     # getting from the mmo the info we need for the window
-    mmo_data_exists, mmo_data = mmo_handler.get_json_model_from_mmo("", "")
-
+    mmo_data_exists, mmo_data = mmo_handler.get_json_model_from_mmo(MMO_PATH)
 
     while True:
 
@@ -184,11 +160,7 @@ def main():
                             helper_functions.save_frame_as_picture(color_frame, found_object, frame_timestamp)
 
                         # posting the images(optional) and objects data to s3 and kinesis
-                        kinesis_handler.start_posting(args.aws_access_key,          # aws access key
-                                                      args.aws_secret_access_key,   # secret access key
-                                                      args.region,                  # region
-                                                      args.data_stream_name,        # points stream name
-                                                      json.dumps(object_to_post),   # object
+                        kinesis_handler.start_posting(json.dumps(object_to_post),   # object
                                                       config.path_for_pictures)     # path to the pictures
 
                         # clear the image folder after posting -> only if we saved a picture
