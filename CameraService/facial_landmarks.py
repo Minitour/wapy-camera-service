@@ -147,6 +147,9 @@ def main():
                         # means we found an object that the observer was looking at
                         index += 1
 
+                        with open(config.logs_file, 'w') as json_file:
+                            json.dump(found_object, json_file)
+
                         frame_timestamp = int(time.time() * 1000)
                         object_to_post = {
                             "store_id": STORE_ID,

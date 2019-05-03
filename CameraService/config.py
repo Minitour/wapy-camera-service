@@ -15,8 +15,9 @@ headers = {"Content-Type": "application/json"}
 SUCCESS = 200
 
 # PATHS - for image folder and faces model
-path_for_pictures = "./pictures_for_analysis/"
-face_landmark_path = './shape_predictor_68_face_landmarks.dat'
+path_for_pictures = "C:/Users/wapyi/Documents/wapy_src/CameraService/pictures_for_analysis"
+face_landmark_path = "C:/Users/wapyi/Documents/wapy_src/CameraService/shape_predictor_68_face_landmarks.dat"
+logs_file = "C:/Users/wapyi/Documents/wapy_src/CameraService/box_log.txt"
 
 ##########################################################################################################
 #                                                                                                        #
