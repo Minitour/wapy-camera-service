@@ -120,16 +120,19 @@ def fit_model_object(mmo_data, camera_object_distance, left_right, up_down):
 
 def get_camera_object_distance_mmo(mmo_data, left_right, up_down):
     objects = []
+    positions = {}
 
     for m_d in mmo_data['objects']:
 
         object_id = m_d['id']
 
         # getting the values of the axes
-        positions = m_d['position']
+        positions.update(m_d['position'])
+
+        # getting the radius of the object
+        positions.update({"r": m_d['r']})
 
         # checking where the object if located by direction
-
         temp_left_right = "RIGHT" if positions['x'] >= 0.1 else "LEFT"
         temp_up_down = "DOWN" if positions['y'] <= 0 else "UP"
 
