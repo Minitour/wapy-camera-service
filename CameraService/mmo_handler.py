@@ -74,11 +74,15 @@ def get_json_model_from_mmo(path):
             if data is None or (not data):
                 return False, "no data found"
 
+            # means there is no mmo data
+            if data['mmo'] is None:
+                return False, "no mmo data"
+
             # means there are no objects that were calibrated with window
-            if data['objects'] is None or (not data['objects']):
+            if data['mmo']['objects'] is None or (not data['mmo']['objects']):
                 return False, "no objects were calibrated"
 
-            return data['objects']
+            return data['mmo']['objects']
 
     except IOError as error:
         if config.DEEP_DEBUG:
