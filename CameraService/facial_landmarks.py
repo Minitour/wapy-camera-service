@@ -9,21 +9,19 @@ import config
 import device_manager_class
 import helper_functions
 import mmo_handler
+import datetime
 
 
 def main():
-    CAMERA_ID = ""
-    STORE_ID = ""
-    MMO_PATH = ""
 
     if os.environ['MMO_PATH'] is not None:
-        MMO_PATH = os.environ['MMO_PATH']
+        config.change_mmo_path(os.environ['MMO_PATH'])
 
     if os.environ['CAMERA_ID'] is not None:
-        CAMERA_ID = os.environ['CAMERA_ID']
+        config.change_camera_id(os.environ['CAMERA_ID'])
 
     if os.environ['STORE_ID'] is not None:
-        STORE_ID = os.environ['STORE_ID']
+        config.change_store_id(os.environ['STORE_ID'])
 
     # the config for the cameras
     config_pipeline = device_manager_class.get_config_for_camera()
@@ -47,7 +45,10 @@ def main():
     index = 1
 
     # getting from the mmo the info we need for the window
-    mmo_data_exists, mmo_data = mmo_handler.get_json_model_from_mmo(MMO_PATH)
+    mmo_data_exists, mmo_data = mmo_handler.get_json_model_from_mmo(config.MMO_PATH)
+
+    if mmo_data['owner_uid'] is not None and mmo_data['owner_uid']:
+        config.change_owner_uid(mmo_data['owner_uid'])
 
     while True:
 
@@ -154,8 +155,9 @@ def main():
 
                             frame_timestamp = int(time.time() * 1000)
                             object_to_post = {
-                                "store_id": STORE_ID,
-                                "camera_id": CAMERA_ID,
+                                "owner_uid": config.OWNER_UID,
+                                "store_id": config.STORE_ID,
+                                "camera_id": config.CAMERA_ID,
                                 "object_id": found_object,
                                 "timestamp": frame_timestamp
                             }
@@ -186,3 +188,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    
