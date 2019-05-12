@@ -28,7 +28,7 @@ def get_head_pose(shape):
 def save_frame_as_picture(frame, object_id, frame_timestamp):
 
     # adding the timestamp and the x,y position we are attaching to the frame
-    image_name = "{}{}_{}_{}_{}.jpg".format(config.path_for_pictures, str(frame_timestamp), str(object_id), facial_landmarks.CAMERA_ID, facial_landmarks.STORE_ID)
+    image_name = "{}{}_{}_{}_{}_{}.jpg".format(config.path_for_pictures, str(frame_timestamp), str(object_id), config.CAMERA_ID, config.STORE_ID, config.OWNER_UID)
     cv2.imwrite(image_name, frame)
 
     if config.DEBUG:

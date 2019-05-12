@@ -83,3 +83,29 @@ KINESIS_SUCCESS_RESPONSE = 200
 bucketName = "wapyvalues"
 if os.environ['BUCKET'] is not None:
     bucketName = os.environ['BUCKET']
+
+
+STORE_ID = ""
+CAMERA_ID = ""
+OWNER_UID = ""
+MMO_PATH = ""
+
+
+def change_mmo_path(path):
+    global MMO_PATH
+    MMO_PATH = path
+
+
+def change_owner_uid(owner_uid):
+    global OWNER_UID
+    OWNER_UID = owner_uid
+
+
+def change_camera_id(camera_id):
+    global CAMERA_ID
+    CAMERA_ID = camera_id
+
+
+def change_store_id(store_id):
+    global STORE_ID
+    STORE_ID = store_id
