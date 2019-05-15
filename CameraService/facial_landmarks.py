@@ -17,12 +17,6 @@ def main():
     if os.environ['MMO_PATH'] is not None:
         config.change_mmo_path(os.environ['MMO_PATH'])
 
-    if os.environ['CAMERA_ID'] is not None:
-        config.change_camera_id(os.environ['CAMERA_ID'])
-
-    if os.environ['STORE_ID'] is not None:
-        config.change_store_id(os.environ['STORE_ID'])
-
     # the config for the cameras
     config_pipeline = device_manager_class.get_config_for_camera()
 
@@ -45,10 +39,12 @@ def main():
     index = 1
 
     # getting from the mmo the info we need for the window
-    mmo_data_exists, mmo_data = mmo_handler.get_json_model_from_mmo(config.MMO_PATH)
+    mmo_data, owner_uid, camera_id, store_id = mmo_handler.get_json_mmo(config.MMO_PATH)
 
-    if mmo_data['owner_uid'] is not None and mmo_data['owner_uid']:
-        config.change_owner_uid(mmo_data['owner_uid'])
+    if owner_uid and camera_id and store_id:
+        config.change_store_id(store_id)
+        config.change_camera_id(camera_id)
+        config.change_owner_uid(owner_uid)
 
     while True:
 

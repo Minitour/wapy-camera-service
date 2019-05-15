@@ -60,7 +60,7 @@ def stab_window_data():
 
 # this function will get the mmo model from the json file
 # saved on the disk
-def get_json_model_from_mmo(path):
+def get_json_mmo(path):
 
     if path == "":
         return stab_window_data()
@@ -75,14 +75,17 @@ def get_json_model_from_mmo(path):
                 return False, "no data found"
 
             # means there is no mmo data
-            if data['mmo'] is None:
+            if data['mmo'] is None or data['name'] is None or data['owner_uid'] is None or not data['store']['_path']['segments']:
                 return False, "no mmo data"
 
             # means there are no objects that were calibrated with window
             if data['mmo']['objects'] is None or (not data['mmo']['objects']):
                 return False, "no objects were calibrated"
 
-            return data['mmo']['objects']
+            # getting the store id by filter the segments that are not 'stores'
+            store_id = [v for v in data['store']['_path']['segments'] if v != "stores"][0]
+
+            return data['mmo']['objects'], data['owner_uid'], data['name'], store_id
 
     except IOError as error:
         if config.DEEP_DEBUG:
@@ -122,7 +125,7 @@ def get_camera_object_distance_mmo(mmo_data, left_right, up_down):
     objects = []
     positions = {}
 
-    for m_d in mmo_data['objects']:
+    for m_d in mmo_data:
 
         object_id = m_d['id']
 
