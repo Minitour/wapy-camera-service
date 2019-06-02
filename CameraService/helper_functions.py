@@ -3,6 +3,7 @@ import cv2
 import config
 import facial_landmarks
 import os
+import math
 
 
 def get_head_pose(shape):
@@ -50,7 +51,8 @@ def clear_images_folder():
 
 def calc_normlized_dis(dis,angle):
     # temp_angle = 90 - np.deg2rad(angle)
-    d = dis * np.sin(np.deg2rad(angle))
+    # d = dis * np.sin(np.deg2rad(angle))
+    d = dis * np.sin(math.degrees(angle))
     if d == 0:
         d = 1
     return d
@@ -78,11 +80,13 @@ def get_axe_distance_to_object(distances_to_object, angle):
 
     for dis in distances_to_object:
         # calculate the angle in front of distance (90 - x_angle) -> distance_angle
-        distance_angle = 90 - np.deg2rad(angle)
+        # distance_angle = 90 - np.deg2rad(angle)
+        distance_angle = 90 - math.degrees(angle)
 
         # formula: distance / sin(distance_angle) = x_distance / sin(x_angle) ->
         # -> x_distance = distance * sin(x_angle) / sin(distance_angle)
-        x_distance = dis * np.sin(np.deg2rad(angle)) / np.sin(np.deg2rad(distance_angle))
+        # x_distance = dis * np.sin(np.deg2rad(angle)) / np.sin(np.deg2rad(distance_angle))
+        x_distance = dis * np.sin(math.degrees(angle)) / np.sin(math.degrees(distance_angle))
         x_distance = x_distance if x_distance != 0 else 1
         x_distances.append(x_distance)
 
