@@ -72,6 +72,9 @@ class DeviceManager:
         self._config.enable_device(device_serial)
         pipeline_profile = pipeline.start(self._config)
 
+        depth_sensor = pipeline_profile.get_device().first_depth_sensor()
+        depth_sensor.set_option(rs.option.exposure, 8400.0)
+
         self._profile_pipe = pipeline_profile
         self._enabled_devices[device_serial] = (Device(pipeline, pipeline_profile))
 
@@ -101,7 +104,7 @@ class DeviceManager:
 
         # extract the color and depth frames from the camera
         depth_frame = frames.get_depth_frame()
-        color_frame = np.asanyarray(frames.get_color_frame().get_data())
+        color_frame = frames.get_color_frame()
 
         return color_frame, depth_frame
 
@@ -154,7 +157,33 @@ def get_frames_from_all_cameras(device_manager, number_of_devices):
     for i in range(number_of_devices):
         serial = device_manager.get_serial_number(i)
         color_frame, depth_frame = device_manager.poll_frames(serial)
+
+        # remove the background from 1.5 meters and on
+        color_frame = clip_frame_by_distance(device_manager.get_pipeline, color_frame, depth_frame, 1.5)
+
         frames.append({"device": str(serial), "color_frame": color_frame, "depth_frame": depth_frame})
 
     return frames
+
+
+def clip_frame_by_distance(profile, color_frame, depth_frame, distance=1.5):
+
+    # getting the scale from the sensor
+    depth_sensor = profile.get_device().first_depth_sensor()
+    depth_scale = depth_sensor.get_depth_scale()
+
+    # adjust the clipping distance
+    clipping_distance = distance / depth_scale
+
+    # convert the frames into np arrays
+    depth_image = np.asanyarray(depth_frame.get_data())
+    color_image = np.asanyarray(color_frame.get_data())
+
+    # Remove background - Set pixels further than clipping_distance to grey
+    grey_color = 153
+    depth_image_3d = np.dstack(
+        (depth_image, depth_image, depth_image))  # depth image is 1 channel, color is 3 channels
+    bg_removed = np.where((depth_image_3d > clipping_distance) | (depth_image_3d <= 0), grey_color, color_image)
+
+    return bg_removed
 
