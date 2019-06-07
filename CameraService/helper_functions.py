@@ -32,7 +32,7 @@ def save_frame_as_picture(frame, object_id, frame_timestamp):
     image_name = "{}{}_{}_{}_{}_{}.jpg".format(config.path_for_pictures, str(frame_timestamp), str(object_id), config.CAMERA_ID, config.STORE_ID, config.OWNER_UID)
     cv2.imwrite(image_name, frame)
 
-    if config.DEBUG:
+    if config.DEEP_DEBUG:
         print("saved photo with name: {}.jpg".format(image_name))
 
 
@@ -44,6 +44,16 @@ def clear_images_folder():
                 os.unlink(file_path)
         except Exception as e:
             print(e)
+
+
+def put_text(frame, item, value, upper_position, lower_position, color):
+    try:
+        cv2.putText(frame, item, upper_position, cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                    color, lineType=cv2.LINE_AA)
+        cv2.putText(frame, str(value), lower_position, cv2.FONT_HERSHEY_SIMPLEX, 1.0,
+                    color, lineType=cv2.LINE_AA)
+    except Exception as error:
+        print(error)
 
 
 ## -------------------------------------- handlers for analysis and values ------------------------------------ ##

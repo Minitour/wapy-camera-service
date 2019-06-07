@@ -59,16 +59,11 @@ def init_service_client(service, aws_access_key_id, aws_secret_access_key, regio
 
 def post_data_to_kinesis(client, data_stream_name, data, debug):
 
-    print("got " + str(len(json.loads(data))) + " tuple of points")
+    print(json.dumps(json.loads(data), indent=4))
 
-    index = 0
-    for d in json.loads(data):
+    post_to_kinesis(client, data_stream_name, data, debug)
 
-        post_to_kinesis(client, data_stream_name, json.dumps(d), debug)
-
-        index += 1
-
-    print("posted all " + str(index) + " data points\n")
+    print("object has been posted!")
 
 
 def post_images_to_s3(client, images_path, debug):
