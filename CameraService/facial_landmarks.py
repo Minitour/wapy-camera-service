@@ -29,6 +29,10 @@ def main():
     # adjust the number of available devices according to the number of cameras enabled successfully
     number_of_devices = device_manager.get_available_camera()
 
+    if number_of_devices < 1:
+        print("No cameras connected.")
+        return 1
+
     # init the detector
     detector = dlib.get_frontal_face_detector()
 
@@ -45,6 +49,10 @@ def main():
         config.change_store_id(store_id)
         config.change_camera_id(camera_id)
         config.change_owner_uid(owner_uid)
+        print("Got all parameters: store id, camera id, owner id")
+    else:
+        print("Missing parameters: [store id, camera id, owner id]")
+        return 1
 
     while True:
 
@@ -146,10 +154,7 @@ def main():
                             # means we found an object that the observer was looking at
                             index += 1
 
-                            with open(config.logs_file, 'w') as json_file:
-                                json.dump(found_object, json_file)
-
-                            frame_timestamp = int(time.time() * 1000)
+                            frame_timestamp = datetime.datetime.now().timestamp()
                             object_to_post = {
                                 "owner_uid": config.OWNER_UID,
                                 "store_id": config.STORE_ID,
@@ -158,28 +163,55 @@ def main():
                                 "timestamp": frame_timestamp
                             }
 
-                            # saving the picture with the timestamp + object id
-                            if index % config.FRAME_INTERVAL == 0:
-                                helper_functions.save_frame_as_picture(color_frame, found_object, frame_timestamp)
+                            if config.DEMO_MODE:
+                                config.add_window_item(found_object, left_right, up_down)
+                            else:
+                                # saving the picture with the timestamp + object id
+                                if index % config.FRAME_INTERVAL == 0:
+                                    helper_functions.save_frame_as_picture(color_frame, found_object, frame_timestamp)
 
-                            # posting the images(optional) and objects data to s3 and kinesis
-                            kinesis_handler.start_posting(json.dumps(object_to_post),   # object
-                                                          config.path_for_pictures)     # path to the pictures
+                                # posting the images(optional) and objects data to s3 and kinesis
+                                kinesis_handler.start_posting(json.dumps(object_to_post),   # object
+                                                              config.path_for_pictures)     # path to the pictures
 
-                            # clear the image folder after posting -> only if we saved a picture
-                            if index % config.FRAME_INTERVAL == 0:
-                                helper_functions.clear_images_folder()
+                                # clear the image folder after posting -> only if we saved a picture
+                                if index % config.FRAME_INTERVAL == 0:
+                                    helper_functions.clear_images_folder()
 
                         else:
                             if config.DEEP_DEBUG:
                                 print("no object found with distance from camera: {}".format(camera_object_distances))
 
-                cv2.imshow(camera_frame['device'], color_frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    device_manager.disable_streams()
-                    break
+                if config.DEMO_MODE:
+                    print(json.dumps(config.items_in_window, indent=4))
+                    if config.items_in_window.keys():
+
+                        for item in config.items_in_window.keys():
+                            if config.items_in_window[item]['position'] == "RIGHT.UP":
+                                helper_functions.put_text(frame=color_frame, item=str(item), value=config.items_in_window[item]['value'],
+                                         upper_position=(400, 50), lower_position=(470, 80), color=(0, 0, 205))
+
+                            if config.items_in_window[item]['position'] == "RIGHT.DOWN":
+                                helper_functions.put_text(frame=color_frame, item=str(item), value=config.items_in_window[item]['value'],
+                                         upper_position=(400, 420), lower_position=(470, 440), color=(153, 153, 0))
+
+                            if config.items_in_window[item]['position'] == "LEFT.UP":
+                                helper_functions.put_text(frame=color_frame, item=str(item), value=config.items_in_window[item]['value'],
+                                         upper_position=(50, 50), lower_position=(120, 80), color=(139, 0, 0))
+
+                            if config.items_in_window[item]['position'] == "LEFT.DOWN":
+                                helper_functions.put_text(frame=color_frame, item=str(item), value=config.items_in_window[item]['value'],
+                                         upper_position=(50, 420), lower_position=(120, 440), color=(46, 139, 87))
+
+                    cv2.namedWindow(camera_frame['device'], cv2.WND_PROP_ASPECT_RATIO)
+                    cv2.setWindowProperty(camera_frame['device'], cv2.WND_PROP_ASPECT_RATIO, cv2.WINDOW_NORMAL)
+                    cv2.imshow(camera_frame['device'], color_frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        device_manager.disable_streams()
+                        break
 
             index += 1
+
 
 
 if __name__ == '__main__':

@@ -5,6 +5,9 @@ import os
 DEBUG = False
 DEEP_DEBUG = False
 
+DEMO_MODE = False
+items_in_window = {}
+
 # post processing constants
 DISTANCE = 1
 FRAME_INTERVAL = 150
@@ -109,3 +112,16 @@ def change_camera_id(camera_id):
 def change_store_id(store_id):
     global STORE_ID
     STORE_ID = store_id
+
+
+def add_window_item(found_object, left_right, up_down):
+    global items_in_window
+    try:
+        items_in_window[str(found_object).replace("-", "")]['value'] += 1
+    except KeyError:
+        json_object = {
+            str(found_object).replace("-", ""): {
+                "position": "{}.{}".format(left_right, up_down),
+                "value": 1
+            }}
+        items_in_window.update(json_object)
