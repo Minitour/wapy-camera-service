@@ -205,11 +205,13 @@ def main():
                     cv2.namedWindow(camera_frame['device'], cv2.WND_PROP_ASPECT_RATIO)
                     cv2.setWindowProperty(camera_frame['device'], cv2.WND_PROP_ASPECT_RATIO, cv2.WINDOW_NORMAL)
                     cv2.imshow(camera_frame['device'], color_frame)
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        device_manager.disable_streams()
-                        break
+
 
             index += 1
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            device_manager.disable_streams()
+            break
 
 
 if __name__ == '__main__':
