@@ -102,9 +102,14 @@ class DeviceManager:
         # getting the frames from the camera
         frames = self._enabled_devices[device_serial].pipeline.wait_for_frames()
 
+        align_to = rs.stream.color
+        align = rs.align(align_to)
+
+        aligned_frames = align.process(frames)
+
         # extract the color and depth frames from the camera
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
+        depth_frame = aligned_frames.get_depth_frame()
+        color_frame = aligned_frames.get_color_frame()
 
         return color_frame, depth_frame
 
@@ -175,9 +180,12 @@ def clip_frame_by_distance(profile, color_frame, depth_frame, distance=1.5):
     # adjust the clipping distance
     clipping_distance = distance / depth_scale
 
+    aligned_frames
+
     # convert the frames into np arrays
     depth_image = np.asanyarray(depth_frame.get_data())
     color_image = np.asanyarray(color_frame.get_data())
+
 
     # Remove background - Set pixels further than clipping_distance to grey
     grey_color = 153
