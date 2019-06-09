@@ -180,8 +180,6 @@ def clip_frame_by_distance(profile, color_frame, depth_frame, distance=1.5):
     # adjust the clipping distance
     clipping_distance = distance / depth_scale
 
-    aligned_frames
-
     # convert the frames into np arrays
     depth_image = np.asanyarray(depth_frame.get_data())
     color_image = np.asanyarray(color_frame.get_data())
