@@ -5,7 +5,7 @@ import os
 DEBUG = False
 DEEP_DEBUG = False
 
-DEMO_MODE = False
+DEMO_MODE = True
 items_in_window = {}
 
 # post processing constants
