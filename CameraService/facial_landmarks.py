@@ -99,8 +99,7 @@ def main():
                         # draw points for the face
                         for (x, y) in shape:
 
-                            if config.DEEP_DEBUG:
-                                cv2.circle(color_frame, (x, y), 1, (0, 0, 255), -1)
+                            cv2.circle(color_frame, (x, y), 1, (0, 0, 255), -1)
 
                         # getting the distance to the first x,y
                         if start_x is not None and start_y is not None:
