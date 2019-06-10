@@ -48,13 +48,39 @@ def clear_images_folder():
 
 def put_text(frame, item, value, upper_position, lower_position, color):
     try:
-        cv2.putText(frame, item, upper_position, cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+        # TODO: remove this line and replace with the commented line.
+        cv2.putText(frame, get_display_name(item), upper_position, cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     color, lineType=cv2.LINE_AA)
+        # cv2.putText(frame, item, upper_position, cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+        #             color, lineType=cv2.LINE_AA)
         cv2.putText(frame, str(value), lower_position, cv2.FONT_HERSHEY_SIMPLEX, 1.0,
                     color, lineType=cv2.LINE_AA)
     except Exception as error:
         print(error)
 
+
+######################
+# this function is for demo only! --- will remove after demo!
+######################
+def get_display_name(item):
+    # if we sent empty object id -> return something
+    if item is None:
+        return "Product"
+
+    # return the product display name
+    try:
+        return {
+            "NzpMK7JXvwXcgadUoI5W": "Blazer Jacket",
+            "VR5XqdiPxzoWdJHOW8b1": "Strapless Shirtt",
+            "cdFZChfEvluW6T3OcFG7": "Leather Jacket",
+            "po7NPNSLP10OlrRpMMAk": "T-Shirt",
+            "vuTJIPpjGvk5To5DlCWl": "Adidas Shirt",
+            "xopN1GwmcyaGAx62pFZ0": "Orange Hoodie"
+        }[item]
+    except Exception as error:
+        # if we sent something but the product is not defined -> return the object id
+        print("no product found, return the original item: {}".format(item))
+        return item
 
 ## -------------------------------------- handlers for analysis and values ------------------------------------ ##
 
