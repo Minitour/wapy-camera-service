@@ -164,7 +164,7 @@ def get_frames_from_all_cameras(device_manager, number_of_devices):
         color_frame, depth_frame = device_manager.poll_frames(serial)
 
         # remove the background from 1.5 meters and on
-        color_frame = clip_frame_by_distance(device_manager.get_pipeline(), color_frame, depth_frame, 1.5)
+        color_frame = clip_frame_by_distance(device_manager.get_pipeline(), color_frame, depth_frame, 2)
 
         frames.append({"device": str(serial), "color_frame": color_frame, "depth_frame": depth_frame})
 
